@@ -2,7 +2,7 @@ import os
 
 ICON_DIR = 'icons'
 
-# Look for Icons subdirectory in the same directory as this module
+# Look for the icons subdirectory in the same directory as this module
 try:
     _icon_dir = os.path.join(os.path.dirname(__file__), ICON_DIR)
 except NameError:
