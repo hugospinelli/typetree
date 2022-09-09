@@ -19,6 +19,10 @@ dynamic = ["version"]
 [project.optional-dependencies]
 clipboard = ["pyperclip>=1.8.2"]
 
+[project.urls]
+"Homepage" = "https://github.com/hugospinelli/typetree"
+"Bug Tracker" = "https://github.com/hugospinelli/typetree/issues"
+
 [tool.setuptools]
 zip-safe = false
 
