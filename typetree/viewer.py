@@ -626,12 +626,12 @@ class PicklableObjectTree:
     def __init__(self, object_tree):
         self.visible_branches = tuple(map(PicklableObjectTree,
                                           object_tree.visible_branches))
-        self.node_str: str = object_tree.node_str
+        self.node_str: str = object_tree.node_text
         self.path: str = object_tree.path
         self.expandable: bool = object_tree.expandable
         self.overflowed: bool = object_tree.overflowed
         self.too_deep: bool = object_tree.too_deep
-        self.max_lines: int = object_tree.max_lines
+        self.max_lines: int = object_tree.config.max_lines
 
 
 def tree_window_loop(object_tree: PicklableObjectTree):

@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 
+import dataclasses
 import enum
 import functools
 import json
 import re
 
+from collections.abc import Callable
 from typing import Any
 
 try:
@@ -13,14 +15,14 @@ except (ModuleNotFoundError, ImportError):
     from .viewer import tree_viewer
 
 __all__ = [
-    'Tree',
+    'SubTree',
     'print_tree',
     'view_tree',
 ]
 
-_INF = float('inf')
 _DEFAULT_MAX_BRANCHES = 20
 _DEFAULT_MAX_DEPTH = 10
+_DEFAULT_MAX_SEARCH = 1000
 _DEFAULT_MAX_LINES = 1000
 
 # Pre-compiled format for _KeyType.INDEX and _KeyType.SLICE
@@ -56,19 +58,24 @@ class _KeyType(enum.Enum):
         match key_type, value:
             case cls.NONE, None:
                 return ''
+            case cls.NONE, str():
+                return value
             case cls.ATTR, _:
-                return '.{!s}'.format(value)
+                return f'.{value!s}'
             case cls.MAP, _:
-                return '[{!r}]'.format(value)
+                return f'[{value!r}]'
             case cls.SET, int():
                 return ''
             case cls.INDEX, int():
-                return '[{:d}]'.format(value)
+                return f'[{value}]'
+            case cls.INDEX, None:
+                return '[:]'
             case cls.INDEX, (int(x), int(y)):
                 if x + 1 == y:
-                    return '[{:d}]'.format(x)
-                # Need unpacking: *value
-                return '[{:d}:{:d}]'.format(x, y)
+                    return f'[{x}]'
+                if x == 0:
+                    return f'[:{y}]'
+                return f'[{x}:{y}]'
         raise TypeError(f"Invalid key type '{key_type}' or value '{value}'")
 
     @classmethod
@@ -165,104 +172,188 @@ class _NodeKey:
         return self._hash
 
 
+# noinspection PyUnresolvedReferences
+@dataclasses.dataclass(slots=True, frozen=True)
+class Config:
+    """Configuration class for generating a new Tree.
+
+    Attributes:
+        items_lookup: Function used to access the node's content
+        type_name_lookup: Function used to get the type name.
+        value_lookup: Function used to get the value when the node's
+            content is empty (tree leaves).
+        sort_keys: Flag for sorting keys alphabetically.
+        show_lengths: Flag for displaying lengths of iterables. This
+            affects how subtrees are grouped together, since sequences
+            with different sizes but same content types will be
+            considered equivalent.
+        include_attributes: Flag for including the mutable attributes
+            returned by vars().
+        include_dir: Flag for including the attributes returned by
+            dir(), except the protected (_protected) and special
+            (__special__) ones.
+        include_protected: Flag for including the protected (_protected)
+            attributes.
+        include_special: Flag for including the special (__special__)
+            attributes.
+        max_branches: Maximum number of branches displayed on each node.
+            This only applies after grouping. Can be disabled by setting
+            it to float('inf') or math.inf.
+        max_depth: Maximum display depth. Beware that the true search
+            depth is one higher than specified. Can be disabled by
+            setting it to float('inf') or math.inf (not recommended).
+        max_search: Maximum number of nodes searched. Can be disabled
+            by setting it to float('inf') or math.inf.
+        max_lines: Maximum number of lines to be printed. For the GUI,
+            it is the maximum number of rows to be displayed, not
+            including the extra ellipsis at the end. Can be disabled by
+            setting it to float('inf') or math.inf.
+    """
+    items_lookup: Callable[[Any], Any] = lambda var: var
+    type_name_lookup: Callable[[Any], str] = lambda var: type(var).__name__
+    value_lookup: Callable[[Any], Any] = lambda var: var
+    sort_keys: bool = True
+    show_lengths: bool = True
+    include_attributes: bool = True
+    include_dir: bool = False
+    include_protected: bool = False
+    include_special: bool = False
+    max_branches: float = _DEFAULT_MAX_BRANCHES
+    max_depth: float = _DEFAULT_MAX_DEPTH
+    max_search: float = _DEFAULT_MAX_SEARCH
+    max_lines: float = _DEFAULT_MAX_LINES
+
+
+class _MaxSearchError(Exception):
+    """Reached maximum number of nodes to be searched"""
+    pass
+
+
 class _Node:
     """Non-recursive tree node"""
 
-    def __init__(self, var: Any, node_key: _NodeKey, *,
-                 show_lengths: bool = True,
-                 show_attributes: bool = True,
-                 include_dir: bool = False,
-                 include_protected: bool = False,
-                 include_special: bool = False):
+    def __init__(self, var: Any, node_key: _NodeKey, config: Config,
+                 nodes_visited: int, ancestors_ids: set):
 
         self.key: _NodeKey = node_key
-        self.path = node_key.path
-        self.show_lengths: bool = show_lengths
-        self.show_attributes: bool = show_attributes
-        self.include_dir: bool = include_dir
-        self.include_protected: bool = include_protected
-        self.include_special: bool = include_special
+        self.path: str = node_key.path
+        self.config: Config = config
+        self.nodes_visited: int = nodes_visited
+        self.ancestors_ids: set = ancestors_ids
+        var_id: int = id(var)
+        # TODO: check for infinite recursion
+        if var_id in self.ancestors_ids:
+            ...
+        self.ancestors_ids.add(var_id)
 
-        self.type: type = type(var)
+        self.type_name: str
+        try:
+            # noinspection PyArgumentList
+            self.type_name = self.config.type_name_lookup(var)
+        except AttributeError:
+            self.type_name = '?'
+        original_var: Any = var
+        # noinspection PyArgumentList
+        var = self.config.items_lookup(var)
 
         # These refer to the contents of Maps or Sequences
-        self.items_key_type: _KeyType
-        self.items_len: int | None
-        self.items_key_type, self.items_len = self.get_var_items_info(var)
+        self.items_key_type: _KeyType = _KeyType.NONE
+        self.items_len: int | None = None
+        self.get_items_info(var, original_var)
 
         self.branches: dict[_NodeKey, Any] = {}
-        if self.show_attributes and hasattr(var, '__dict__'):
-            for key, value in vars(var).items():
-                if self.include_attr(key):
-                    _node_key = _NodeKey(_KeyType.ATTR, key)
-                    self.branches[_node_key] = value
-        if self.include_dir:
-            for key in dir(var):
-                if self.include_attr(key):
-                    _node_key = _NodeKey(_KeyType.ATTR, key)
-                    if _node_key not in self.branches:
-                        try:
-                            self.branches[_node_key] = getattr(var, key)
-                        except AttributeError:
-                            pass
-        match self.items_key_type:
-            case _KeyType.MAP:
-                for key, value in var.items():
-                    _node_key = _NodeKey(_KeyType.MAP, key)
-                    self.branches[_node_key] = value
-            case _KeyType.INDEX:
-                for index, value in enumerate(var):
-                    _node_key = _NodeKey(_KeyType.INDEX, index)
-                    self.branches[_node_key] = value
-            case _KeyType.SET:
-                for value in var:
-                    _node_key = _NodeKey(_KeyType.SET, 1)
-                    self.branches[_node_key] = value
-
-        self.var_repr: str
         try:
-            self.var_repr = f'<{self.type.__name__}>'
-        except AttributeError:
-            self.var_repr = repr(self.type)
-        if self.show_lengths and self.items_len is not None:
+            if self.config.include_attributes and hasattr(var, '__dict__'):
+                for key, value in vars(var).items():
+                    if self.include_attr(key):
+                        self.add_branch(_KeyType.ATTR, key, value)
+            if self.config.include_dir:
+                for key in dir(var):
+                    if self.include_attr(key):
+                        try:
+                            value = getattr(var, key)
+                        except AttributeError:
+                            continue
+                        self.add_branch(_KeyType.ATTR, key, value)
+            match self.items_key_type:
+                case _KeyType.MAP:
+                    for key, value in var.items():
+                        self.add_branch(_KeyType.MAP, key, value)
+                case _KeyType.INDEX:
+                    for index, value in enumerate(var):
+                        self.add_branch(_KeyType.INDEX, index, value)
+                case _KeyType.SET:
+                    for value in var:
+                        self.add_branch(_KeyType.SET, 1, value)
+        except _MaxSearchError:
+            pass
+
+        self.var_repr: str = f'<{self.type_name}>'
+        if self.config.show_lengths and self.items_len is not None:
             self.var_repr = f'{self.var_repr}[{self.items_len}]'
 
-    @staticmethod
-    def get_var_items_info(var: Any) -> tuple[_KeyType, int | None]:
+    def get_items_info(self, var: Any, original_var: Any):
         """Check which kind of iterable var is, if any, and return the
         _KeyType associated with its content and its size. Return
         (_KeyType.NONE, None) if var is not a simple finite iterable."""
         try:
             size = len(var)
         except TypeError:
-            return _KeyType.NONE, None
+            return
+        if size == 0:
+            try:
+                # noinspection PyArgumentList
+                var = self.config.value_lookup(original_var)
+            except AttributeError:
+                return
+            # Continue: value_lookup might return itself and var might
+            # be an empty Sequence
+            try:
+                size = len(var)
+            except TypeError:
+                return
         if isinstance(var, str | bytes | bytearray):
-            return _KeyType.NONE, None
+            return
         try:
             # Since Maps are usually also Sequences, the priority is
-            # to access the Map items. But some objects might return
-            # different lengths for .items() and iter(). In this case,
-            # the priority is the iter() values.
-            assert len(var.items()) == size
+            # to access the Map items. But if the keys do not match
+            # their Sequence values, the priority inverts.
+            assert size == len(var.keys()) == len(var.items())
+            assert all(key1 == key2 for key1, key2 in zip(var, var.keys()))
             assert all(var[key] == value for key, value in var.items())
-            return _KeyType.MAP, size
+            self.items_key_type = _KeyType.MAP
+            self.items_len = size
+            return
         except (AttributeError, TypeError, KeyError, AssertionError):
             pass
         try:
             assert all(var[index] == value for index, value in enumerate(var))
         except (KeyError, TypeError, AssertionError):
             try:
-                iter(var)
-            except TypeError:
-                return _KeyType.NONE, None
-            return _KeyType.SET, size
-        return _KeyType.INDEX, size
+                next(iter(var))
+            except (TypeError, KeyError):
+                return
+            except StopIteration:
+                pass
+            self.items_key_type = _KeyType.SET
+            self.items_len = size
+            return
+        self.items_key_type = _KeyType.INDEX
+        self.items_len = size
+        return
+
+    def add_branch(self, key_type: _KeyType, key: Any, value: Any):
+        if self.nodes_visited >= self.config.max_search:
+            raise _MaxSearchError
+        node_key = _NodeKey(key_type, key)
+        self.branches[node_key] = value
+        self.nodes_visited += 1
 
     def include_attr(self, key: str) -> bool:
         if key.startswith('__') and key.endswith('__'):
-            return self.include_special
+            return self.config.include_special
         if key.startswith('_'):
-            return self.include_protected
+            return self.config.include_protected
         return True
 
     def __str__(self) -> str:
@@ -273,82 +364,44 @@ class _Node:
 
 
 @functools.total_ordering
-class Tree:
-    """Build a recursive object tree structure"""
+class SubTree:
+    """A recursive object tree structure"""
 
-    def __init__(self, obj: Any, *,
-                 sort_keys: bool = True,
-                 show_lengths: bool = True,
-                 show_attributes: bool = True,
-                 include_dir: bool = False,
-                 include_protected: bool = False,
-                 include_special: bool = False,
-                 max_branches: float | None = _DEFAULT_MAX_BRANCHES,
-                 max_depth: float | None = _DEFAULT_MAX_DEPTH,
-                 max_lines: float | None = _DEFAULT_MAX_LINES,
-                 node_key: _NodeKey | None = None):
+    def __init__(self, obj: Any, node_key: _NodeKey, config: Config,
+                 nodes_visited: int, ancestors_ids: set, depth: int):
+        self._key: _NodeKey = node_key
+        self.config: Config = config
+        nodes_visited += 1
+        self._overflowed: bool = False
+        if nodes_visited >= self.config.max_search:
+            self._overflowed = True
+        self._node: _Node = _Node(obj, self._key, self.config,
+                                  nodes_visited, ancestors_ids)
 
-        self._key: _NodeKey
-        if node_key is None:
-            self._key = _NodeKey(_KeyType.NONE)
-        else:
-            self._key = node_key
-        self._sort_keys: bool = sort_keys
-        self._show_lengths: bool = show_lengths
-        self._show_attributes: bool = show_attributes
-        self._include_dir: bool = include_dir
-        self._include_protected: bool = include_protected
-        self._include_special: bool = include_special
-
-        self._max_branches: float = _INF
-        if max_branches is not None:
-            self._max_branches = max_branches
-
-        self._max_depth: float = _INF
-        if max_depth is not None:
-            self._max_depth = max_depth
-
-        self._max_lines: float = _INF
-        if max_lines is not None:
-            self._max_lines = max_lines
-
-        self._node: _Node = _Node(
-            obj, self._key,
-            show_lengths=self._show_lengths,
-            show_attributes=self._show_attributes,
-            include_dir=self._include_dir,
-            include_protected=self._include_protected,
-            include_special=self._include_special
-        )
-
-        if branch_max_depth := self._max_depth:
-            branch_max_depth -= 1
-        self._node_str: str = ' . . .'
-        self._branches: tuple[Tree, ...] = tuple()
-        self._visible_branches: tuple[Tree, ...] = tuple()
-        self._too_deep: bool = self._max_depth < 1
-        if not self._too_deep:
-            self._branches = tuple(
-                Tree(
-                    var,
-                    sort_keys=self._sort_keys,
-                    show_lengths=self._show_lengths,
-                    show_attributes=self._show_attributes,
-                    include_dir=self._include_dir,
-                    include_protected=self._include_protected,
-                    include_special=self._include_special,
-                    max_branches=self._max_branches,
-                    max_depth=branch_max_depth,
-                    max_lines=self._max_lines,
-                    node_key=_node_key,
-                ) for _node_key, var in self._node.branches.items()
-            )
+        self._node_text: str = ' . . .'
+        self._branches: tuple[SubTree, ...] = ()
+        self._visible_branches: tuple[SubTree, ...] = ()
+        self._too_deep: bool = depth > self.config.max_depth
+        depth += 1
+        branches: list[SubTree] = []
+        if not (self._too_deep or self._overflowed):
+            for _node_key, var in self._node.branches.items():
+                branch: SubTree = SubTree(var, _node_key, self.config,
+                                          nodes_visited, ancestors_ids, depth)
+                nodes_visited = branch._node.nodes_visited
+                branches.append(branch)
+                if nodes_visited >= self.config.max_search:
+                    self._overflowed = True
+                    break
+            self._branches = tuple(branches)
             self._group_branches()
-            self._node_str = str(self._node)
+            self._node_text = str(self._node)
             # noinspection PyTypeChecker
-            max_branches: int = min(len(self._branches), self._max_branches)
+            max_branches: int = min(len(self._branches),
+                                    self.config.max_branches)
             self._visible_branches = tuple(self._branches[:max_branches])
-        self._overflowed: bool = len(self._branches) > self._max_branches
+        self._overflowed = self._overflowed or (len(self._branches)
+                                                > self.config.max_branches)
         self._expandable: bool = bool(self._visible_branches)
 
         self._hash: int = hash((
@@ -365,48 +418,12 @@ class Tree:
         return self._key
 
     @property
-    def sort_keys(self) -> bool:
-        return self._sort_keys
-
-    @property
-    def show_lengths(self) -> bool:
-        return self._show_lengths
-
-    @property
-    def show_attributes(self) -> bool:
-        return self._show_attributes
-
-    @property
-    def include_dir(self) -> bool:
-        return self._include_dir
-
-    @property
-    def include_protected(self) -> bool:
-        return self._include_protected
-
-    @property
-    def include_special(self) -> bool:
-        return self._include_special
-
-    @property
-    def max_branches(self) -> float:
-        return self._max_branches
-
-    @property
-    def max_depth(self) -> float:
-        return self._max_depth
-
-    @property
-    def max_lines(self) -> float:
-        return self._max_lines
-
-    @property
-    def branches(self) -> tuple['Tree', ...]:
+    def branches(self) -> tuple['SubTree', ...]:
         return self._branches
 
     @property
-    def node_str(self) -> str:
-        return self._node_str
+    def node_text(self) -> str:
+        return self._node_text
 
     @property
     def path(self) -> str:
@@ -425,7 +442,7 @@ class Tree:
         return self._overflowed
 
     @property
-    def visible_branches(self) -> tuple['Tree', ...]:
+    def visible_branches(self) -> tuple['SubTree', ...]:
         return self._visible_branches
 
     @staticmethod
@@ -466,11 +483,11 @@ class Tree:
             return
         # Group unique consecutive Sequence branches and
         # unique Collection branches
-        unique_index_branches: list[Tree] = []
-        all_index_branches: list[list[Tree]] = []
+        unique_index_branches: list[SubTree] = []
+        all_index_branches: list[list[SubTree]] = []
         index_keys: list[set[int]] = []
-        unique_set_branches: list[Tree] = []
-        added_branches: list[Tree] = []
+        unique_set_branches: list[SubTree] = []
+        added_branches: list[SubTree] = []
         for branch in self._branches:
             if branch._key.type == _KeyType.INDEX:
                 range_key = range(*branch._key.slice)
@@ -497,7 +514,10 @@ class Tree:
         unique_index_branches.clear()
         for _range, index in self._group_to_map(index_keys).items():
             branch = all_index_branches[index].pop()
-            branch._update_key(_NodeKey(_KeyType.INDEX, _range))
+            if self.config.show_lengths:
+                branch._update_key(_NodeKey(_KeyType.INDEX, _range))
+            else:
+                branch._update_key(_NodeKey(_KeyType.INDEX, None))
             unique_index_branches.append(branch)
         unique_index_branches = list(sorted(unique_index_branches,
                                             key=lambda x: x.key))
@@ -507,7 +527,7 @@ class Tree:
 
         self._branches = tuple(added_branches + unique_index_branches
                                + unique_set_branches)
-        if self._sort_keys:
+        if self.config.sort_keys:
             self._branches = tuple(sorted(self._branches,
                                           key=lambda x: x.key))
         else:
@@ -517,7 +537,7 @@ class Tree:
     def _update_key(self, new_key: _NodeKey):
         self._key = new_key
         self._node.key = new_key
-        self._node_str = str(self._node)
+        self._node_text = str(self._node)
         self._update_paths()
 
     def _update_paths(self, parent_path: str = ''):
@@ -528,61 +548,36 @@ class Tree:
         for branch in self._branches:
             branch._update_paths(self._path)
 
-    def _get_tree_lines(self, root_pad: str = '', branch_pad: str = '', *,
-                        max_depth: float | None = None,
-                        max_branches: float | None = None,
-                        max_lines: float | None = None, ) -> list[str]:
-        if max_depth is None:
-            max_depth = self._max_depth
-        elif max_depth > self._max_depth:
-            raise ValueError('Maximum depth cannot be increased')
-
-        if max_branches is None:
-            max_branches = self._max_branches
-
-        if max_lines is None:
-            max_lines = self._max_lines
-
-        max_depth -= 1
-        if max_depth < 1 and self._node.branches:
+    def _get_tree_lines(self, root_pad: str = '',
+                        branch_pad: str = '') -> list[str]:
+        if self._too_deep and self._node.branches:
             return [f'{root_pad}{self._node}',
                     f'{branch_pad}└── ...']
 
-        lines = [f'{root_pad}{self._node}']
-        if not self._branches:
+        lines: list[str] = [f'{root_pad}{self._node}']
+        if not self._visible_branches:
             return lines
 
-        last_index = int(min(max_branches, len(self._branches) - 1))
-        for branch in self._branches[:last_index]:
+        branches: tuple[SubTree, ...] = self._visible_branches
+        if not self._overflowed:
+            branches = self._visible_branches[:-1]
+        for branch in branches:
             lines.extend(branch._get_tree_lines(
                 root_pad=f'{branch_pad}├── ',
                 branch_pad=f'{branch_pad}│   ',
-                max_depth=max_depth,
-                max_branches=max_branches,
-                max_lines=max_lines
             ))
-        if len(self._branches) > max_branches:
+        if self._overflowed:
             lines.append(f'{branch_pad}...')
-        elif last_index >= 0:
+        else:
             # noinspection PyProtectedMember
-            lines.extend(self._branches[last_index]._get_tree_lines(
+            lines.extend(self._branches[-1]._get_tree_lines(
                 root_pad=f'{branch_pad}└── ',
                 branch_pad=f'{branch_pad}    ',
-                max_depth=max_depth,
-                max_branches=max_branches,
-                max_lines=max_lines
             ))
-        if len(lines) > max_lines:
-            del lines[max_lines - 1:]
+        if len(lines) > self.config.max_lines:
+            del lines[self.config.max_lines - 1:]
             lines.append(' ...')
         return lines
-
-    def get_tree_str(self) -> str:
-        return '\n'.join(self._get_tree_lines(' ', ' '))
-
-    def print(self):
-        """Print a tree view of the object's type structure"""
-        print(self.get_tree_str())
 
     def get_dict(self) -> str | dict[str, str | dict]:
         if not self._branches:
@@ -592,28 +587,7 @@ class Tree:
             for branch in self._branches
         }
 
-    def json(self, *args, **kwargs) -> str:
-        return json.dumps(self.get_dict(), *args, **kwargs)
-
-    def save_json(self, filename, *args,
-                  encoding='utf-8',
-                  ensure_ascii=False,
-                  indent=4,
-                  **kwargs):
-
-        with open(filename, 'w', encoding=encoding) as file:
-            json.dump(self.get_dict(), file, *args,
-                      ensure_ascii=ensure_ascii,
-                      indent=indent,
-                      **kwargs)
-
-    def view(self, spawn_thread=True, spawn_process=False):
-        """Show a tree view of the object's type structure in an
-        interactive Tkinter window."""
-        tree_viewer(self, spawn_thread=spawn_thread,
-                    spawn_process=spawn_process)
-
-    def __eq__(self, other: 'Tree') -> bool:
+    def __eq__(self, other: 'SubTree') -> bool:
         if not isinstance(other, type(self)):
             raise TypeError
         if self._hash != other._hash:
@@ -624,7 +598,7 @@ class Tree:
             return False
         return self._branches == other._branches
 
-    def __lt__(self, other: 'Tree') -> bool:
+    def __lt__(self, other: 'SubTree') -> bool:
         if not isinstance(other, type(self)):
             raise TypeError
         if self == other:
@@ -654,61 +628,88 @@ class Tree:
         return self._hash
 
 
-def print_tree(obj: Any, *,
-               sort_keys: bool = True,
-               show_lengths: bool = True,
-               show_attributes: bool = True,
-               include_dir: bool = False,
-               include_protected: bool = False,
-               include_special: bool = False,
-               max_branches: float | None = _DEFAULT_MAX_BRANCHES,
-               max_depth: float | None = _DEFAULT_MAX_DEPTH,
-               max_lines: float | None = _DEFAULT_MAX_LINES):
+class Tree(SubTree):
+    """Build a recursive object tree structure"""
+
+    def __init__(self, obj: Any, config: Config | None = None,
+                 key_text: str | None = None):
+        if config is None:
+            config = Config()
+        super().__init__(obj, _NodeKey(_KeyType.NONE, key_text), config,
+                         nodes_visited=1, ancestors_ids={id(obj)}, depth=0)
+
+    def json(self, *args, **kwargs) -> str:
+        return json.dumps(self.get_dict(), *args, **kwargs)
+
+    def save_json(self, filename, *args,
+                  encoding='utf-8',
+                  ensure_ascii=False,
+                  indent=4,
+                  **kwargs):
+
+        with open(filename, 'w', encoding=encoding) as file:
+            json.dump(self.get_dict(), file, *args,
+                      ensure_ascii=ensure_ascii,
+                      indent=indent,
+                      **kwargs)
+
+    def get_tree_str(self) -> str:
+        return '\n'.join(self._get_tree_lines(' ', ' '))
+
+    def print(self):
+        """Print a tree view of the object's type structure"""
+        print(self.get_tree_str())
+
+    def view(self, spawn_thread=True, spawn_process=False):
+        """Show a tree view of the object's type structure in an
+        interactive Tkinter window."""
+        tree_viewer(self, spawn_thread=spawn_thread,
+                    spawn_process=spawn_process)
+
+
+def print_tree(obj: Any, config: Config | None = None):
     """Print a tree view of the object's type structure"""
-    Tree(
-        obj,
-        sort_keys=sort_keys,
-        show_lengths=show_lengths,
-        show_attributes=show_attributes,
-        include_dir=include_dir,
-        include_protected=include_protected,
-        include_special=include_special,
-        max_branches=max_branches,
-        max_depth=max_depth,
-        max_lines=max_lines
-    ).print()
+    Tree(obj, config).print()
 
 
-def view_tree(obj: Any, spawn_thread=True, spawn_process=False, *,
-              sort_keys: bool = True,
-              show_lengths: bool = True,
-              show_attributes: bool = True,
-              include_dir: bool = False,
-              include_protected: bool = False,
-              include_special: bool = False,
-              max_branches: float | None = _DEFAULT_MAX_BRANCHES,
-              max_depth: float | None = _DEFAULT_MAX_DEPTH,
-              max_lines: float | None = _DEFAULT_MAX_LINES):
+def view_tree(obj: Any, config: Config | None = None, *,
+              spawn_thread=True, spawn_process=False):
     """Show a tree view of the object's type structure in an interactive
     Tkinter window."""
-    Tree(
-        obj,
-        sort_keys=sort_keys,
-        show_lengths=show_lengths,
-        show_attributes=show_attributes,
-        include_dir=include_dir,
-        include_protected=include_protected,
-        include_special=include_special,
-        max_branches=max_branches,
-        max_depth=max_depth,
-        max_lines=max_lines
-    ).view(spawn_thread=spawn_thread, spawn_process=spawn_process)
+    Tree(obj, config).view(spawn_thread=spawn_thread,
+                           spawn_process=spawn_process)
 
 
 if __name__ == '__main__':
     d1 = [{'a', 'b', 1, 2, (3, 4), (5, 6), 'c', .1}, {'a': 0, 'b': ...}]
-    print_tree(d1)
+    print_tree(d1, Config(show_lengths=False))
     print()
 
     obj1 = Tree(0)
-    view_tree(obj1, include_dir=True, max_depth=3, max_lines=50)
+    print_tree(obj1, Config(include_dir=True, max_depth=3, max_lines=15))
+    print()
+
+    import urllib.request
+    import xml.etree.ElementTree
+    import xml.dom.minidom
+
+    url = 'https://www.w3schools.com/xml/simple.xml'
+    with urllib.request.urlopen(url) as response:
+        r = response.read()
+    text = str(r, encoding='utf-8')
+    tree = xml.etree.ElementTree.fromstring(text)
+    dom = xml.dom.minidom.parseString(text)
+
+    print_tree(dom, Config(
+        items_lookup=lambda x: x.childNodes,
+        type_name_lookup=lambda x: x.nodeName,
+        value_lookup=lambda x: x.text,
+        max_search=15,
+    ))
+    print()
+
+    print_tree(tree, Config(
+        type_name_lookup=lambda x: x.tag,
+        value_lookup=lambda x: x.text,
+    ))
+    print()

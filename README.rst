@@ -15,7 +15,7 @@ typetree
     :target: https://pypi.org/project/typetree/
 
 Generate a type tree view of a Python object's contents and attributes.
-The sub-trees with the same type pattern are grouped together as a
+The subtrees with the same type pattern are grouped together as a
 repeating structure, which forms a much more compact tree. This is very
 useful, for example, for quickly identifying the overall structure of a
 JSON object, which often contains many repeating type patterns.
