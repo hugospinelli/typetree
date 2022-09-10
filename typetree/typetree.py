@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import enum
 import functools
 import json
@@ -183,12 +185,10 @@ class _Node:
 
         self.type: type = type(var)
 
-        self.len: int | None = None
-        if not isinstance(var, str):
-            try:
-                self.len = len(var)
-            except TypeError:
-                pass
+        # These refer to the contents of Maps or Sequences
+        self.items_key_type: _KeyType
+        self.items_len: int | None
+        self.items_key_type, self.items_len = self.get_var_items_info(var)
 
         self.branches: dict[_NodeKey, Any] = {}
         if self.show_attributes and hasattr(var, '__dict__'):
@@ -205,7 +205,7 @@ class _Node:
                             self.branches[_node_key] = getattr(var, key)
                         except AttributeError:
                             pass
-        match self.get_var_type(var):
+        match self.items_key_type:
             case _KeyType.MAP:
                 for key, value in var.items():
                     _node_key = _NodeKey(_KeyType.MAP, key)
@@ -224,20 +224,28 @@ class _Node:
             self.var_repr = f'<{self.type.__name__}>'
         except AttributeError:
             self.var_repr = repr(self.type)
-        if self.show_lengths and self.len is not None:
-            self.var_repr = f'{self.var_repr}[{self.len}]'
+        if self.show_lengths and self.items_len is not None:
+            self.var_repr = f'{self.var_repr}[{self.items_len}]'
 
     @staticmethod
-    def get_var_type(var: Any) -> _KeyType:
+    def get_var_items_info(var: Any) -> tuple[_KeyType, int | None]:
+        """Check which kind of iterable var is, if any, and return the
+        _KeyType associated with its content and its size. Return
+        (_KeyType.NONE, None) if var is not a simple finite iterable."""
         try:
-            len(var)
+            size = len(var)
         except TypeError:
-            return _KeyType.NONE
+            return _KeyType.NONE, None
         if isinstance(var, str | bytes | bytearray):
-            return _KeyType.NONE
+            return _KeyType.NONE, None
         try:
+            # Since Maps are usually also Sequences, the priority is
+            # to access the Map items. But some objects might return
+            # different lengths for .items() and iter(). In this case,
+            # the priority is the iter() values.
+            assert len(var.items()) == size
             assert all(var[key] == value for key, value in var.items())
-            return _KeyType.MAP
+            return _KeyType.MAP, size
         except (AttributeError, TypeError, KeyError, AssertionError):
             pass
         try:
@@ -246,9 +254,9 @@ class _Node:
             try:
                 iter(var)
             except TypeError:
-                return _KeyType.NONE
-            return _KeyType.SET
-        return _KeyType.INDEX
+                return _KeyType.NONE, None
+            return _KeyType.SET, size
+        return _KeyType.INDEX, size
 
     def include_attr(self, key: str) -> bool:
         if key.startswith('__') and key.endswith('__'):
@@ -266,7 +274,7 @@ class _Node:
 
 @functools.total_ordering
 class Tree:
-    """Recursive object tree structure"""
+    """Build a recursive object tree structure"""
 
     def __init__(self, obj: Any, *,
                  sort_keys: bool = True,
@@ -573,6 +581,7 @@ class Tree:
         return '\n'.join(self._get_tree_lines(' ', ' '))
 
     def print(self):
+        """Print a tree view of the object's type structure"""
         print(self.get_tree_str())
 
     def get_dict(self) -> str | dict[str, str | dict]:
@@ -599,6 +608,8 @@ class Tree:
                       **kwargs)
 
     def view(self, spawn_thread=True, spawn_process=False):
+        """Show a tree view of the object's type structure in an
+        interactive Tkinter window."""
         tree_viewer(self, spawn_thread=spawn_thread,
                     spawn_process=spawn_process)
 
@@ -653,6 +664,7 @@ def print_tree(obj: Any, *,
                max_branches: float | None = _DEFAULT_MAX_BRANCHES,
                max_depth: float | None = _DEFAULT_MAX_DEPTH,
                max_lines: float | None = _DEFAULT_MAX_LINES):
+    """Print a tree view of the object's type structure"""
     Tree(
         obj,
         sort_keys=sort_keys,
@@ -677,6 +689,8 @@ def view_tree(obj: Any, spawn_thread=True, spawn_process=False, *,
               max_branches: float | None = _DEFAULT_MAX_BRANCHES,
               max_depth: float | None = _DEFAULT_MAX_DEPTH,
               max_lines: float | None = _DEFAULT_MAX_LINES):
+    """Show a tree view of the object's type structure in an interactive
+    Tkinter window."""
     Tree(
         obj,
         sort_keys=sort_keys,
