@@ -131,7 +131,7 @@ class _NodeKey:
         return self._counter
 
     @property
-    def slice(self) -> tuple[int, int]:
+    def slice(self) -> tuple[int, int] | None:
         return self._slice
 
     def reset_counter(self):

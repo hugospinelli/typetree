@@ -1,4 +1,4 @@
-from .typetree import *
+from .typetree import Tree, print_tree, view_tree
 
 __version__ = '0.1.0'
 

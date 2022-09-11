@@ -189,7 +189,7 @@ attribute lookup, which can be specified by the parameter
     text2 = str(r2, encoding='utf-8')
     json2 = json.loads(text2)
 
-    view_tree(json2)
+    typetree.view_tree(json2)
 
 .. image:: https://raw.githubusercontent.com/hugospinelli/typetree/master/docs/_static/GUI_Example1.png
    :align: center
