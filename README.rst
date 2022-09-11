@@ -191,7 +191,8 @@ attribute lookup, which can be specified by the parameter
 
     view_tree(json2)
 
-.. image:: https://raw.githubusercontent.com/hugospinelli/typetree/master/typetree/docs/_static/GUI_Example1.png
+.. image:: https://raw.githubusercontent.com/hugospinelli/typetree/master/docs/_static/GUI_Example1.png
+   :align: center
 
 Parameters
 ----------
