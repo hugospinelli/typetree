@@ -256,4 +256,3 @@ which method (threading or multiprocessing):
     spawn_thread: bool = True
     spawn_process: bool = False
 
-::
