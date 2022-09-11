@@ -1,5 +1,7 @@
-typetree
-========
+|icon| typetree
+===============
+
+.. |icon| image:: https://raw.githubusercontent.com/hugospinelli/typetree/master/typetree/icons/icon.ico
 
 .. image:: https://img.shields.io/pypi/l/typetree
     :target: https://github.com/hugospinelli/typetree/blob/master/LICENSE.txt
@@ -28,9 +30,16 @@ JSON object, which often contains many repeating type patterns.
 
 Installation
 ------------
-::
+
+Install only typetree (no external dependency)::
 
     pip install typetree
+
+Include pyperclip_ for better clipboard support (optional)::
+
+    pip install typetree[clipboard]
+
+.. _pyperclip: https://pypi.org/project/pyperclip/
 
 Examples
 --------
@@ -54,7 +63,7 @@ Examples
  │   ├── (×1) <float>
  │   ├── (×2) <int>
  │   ├── (×2) <tuple>[2]
- │   │   └── [0:2]: <int>
+ │   │   └── [:2]: <int>
  │   └── (×3) <str>
  └── [1]: <dict>[2]
      ├── ['a']: <int>
@@ -74,7 +83,7 @@ likely freeze.
 
 .. code-block:: python
 
-    typetree.print_tree((0,), include_dir=True, max_depth=3, max_lines=15)
+    typetree.print_tree((0,), include_dir=True, max_depth=2, max_lines=15)
 
 ::
 
@@ -94,3 +103,156 @@ likely freeze.
      ├── .numerator: <int>
  ...
 
+**XML etree integration**
+
+Use :python:`type_name_lookup` to specify how to retrieve the string to be
+displayed as the type name. End nodes of XML etrees are empty tuples, so
+the parameter :python:`value_lookup` should also be given to specify how to
+retrieve their values.
+
+.. code-block:: python
+
+    import urllib.request
+    import xml.etree.ElementTree
+
+    url = 'https://www.w3schools.com/xml/simple.xml'
+    with urllib.request.urlopen(url) as response:
+        r = response.read()
+    text = str(r, encoding='utf-8')
+    tree = xml.etree.ElementTree.fromstring(text)
+
+    typetree.print_tree(
+        tree,
+        type_name_lookup=lambda x: x.tag,
+        value_lookup=lambda x: x.text,
+    )
+
+::
+
+ <breakfast_menu>[5]
+ └── [:5]: <food>[4]
+     ├── [0]: <name>
+     ├── [1]: <price>
+     ├── [2]: <description>
+     └── [3]: <calories>
+
+**DOM integration**
+
+DOM objects are not directly iterable. Child nodes must be accessed through
+attribute lookup, which can be specified by the parameter
+:python:`items_lookup`:
+
+.. code-block:: python
+
+    import xml.dom.minidom
+
+    dom = xml.dom.minidom.parseString(text)
+
+    typetree.print_tree(
+        dom,
+        items_lookup=lambda x: x.childNodes,
+        type_name_lookup=lambda x: x.nodeName,
+        value_lookup=lambda x: x.text,
+        max_search=15,
+    )
+
+::
+
+ <#document>[1]
+ └── [0]: <breakfast_menu>[11]
+     ├── [0]: <#text>
+     ├── [1]: <food>[9]
+     │   ├── [0]: <#text>
+     │   ├── [1]: <name>[1]
+     │   │   └── [0]: <#text>
+     │   ├── [2]: <#text>
+     │   ├── [3]: <price>[1]
+     │   │   └── [0]: <#text>
+     │   ├── [4]: <#text>
+     │   ├── [5]: <description>[1]
+     │   │   └── [0]: <#text>
+     │   ├── [6]: <#text>
+     │   ...
+     ├── [2]: <#text>
+     ...
+
+**Interactive GUI**
+
+.. code-block:: python
+
+    import json
+
+    url2 = 'https://archive.org/metadata/TheAdventuresOfTomSawyer_201303'
+
+    with urllib.request.urlopen(url2) as response2:
+        r2 = response2.read()
+    text2 = str(r2, encoding='utf-8')
+    json2 = json.loads(text2)
+
+    view_tree(json2)
+
+.. image:: https://raw.githubusercontent.com/hugospinelli/typetree/master/typetree/docs/_static/GUI_Example1.png
+
+Parameters
+----------
+
+**Configuration parameters**
+
+.. code-block:: python
+
+    items_lookup: Callable[[Any], Any] = lambda var: var
+    type_name_lookup: Callable[[Any], str] = lambda var: type(var).__name__
+    value_lookup: Callable[[Any], Any] = lambda var: var
+    sort_keys: bool = True
+    show_lengths: bool = True
+    include_attributes: bool = True
+    include_dir: bool = False
+    include_protected: bool = False
+    include_special: bool = False
+    max_branches: float = 20
+    max_depth: float = 10
+    max_search: float = 1000
+    max_lines: float = 1000
+
+- :python:`items_lookup`: Function used to access the node's content.
+- :python:`type_name_lookup`: Function used to get the type name.
+- :python:`value_lookup`: Function used to get the value when the node's
+  content is empty (tree leaves).
+- :python:`sort_keys`: Flag for sorting keys alphabetically.
+- :python:`show_lengths`: Flag for displaying lengths of iterables. This
+  affects how subtrees are grouped together, since sequences with different
+  sizes but same content types will be considered equivalent.
+- :python:`include_attributes`: Flag for including the mutable attributes
+  returned by :python:`vars`.
+- :python:`include_dir`: Flag for including the attributes returned by
+  :python:`dir`, except the protected (:python:`_protected`) and special
+  (:python:`__special__`) ones.
+- :python:`include_protected`: Flag for including the protected
+  (:python:`_protected`) attributes.
+- :python:`include_special`: Flag for including the special
+  (:python:`__special__`) attributes.
+- :python:`max_branches`: Maximum number of branches displayed on each
+  node This only applies after grouping. Can be disabled by setting it to
+  infinity (:python:`float('inf')` or :python:`math.inf`).
+- :python:`max_depth`: Maximum display depth. Beware that the true search
+  depth is one higher than specified. Can be disabled by setting it to
+  infinity (not recommended).
+- :python:`max_search`: Maximum number of nodes searched. Can be disabled
+  by setting it to infinity.
+- :python:`max_lines`: Maximum number of lines to be printed. For the GUI,
+  it is the maximum number of rows to be displayed, not including the extra
+  ellipsis at the end. Can be disabled by setting it to infinity.
+
+**GUI**
+
+For the GUI, both the :python:`typetree.Tree(...).view` method and the
+:python:`typetree.view_tree` function accept two additional arguments
+to configure whether the new window is created asynchronously and by
+which method (threading or multiprocessing):
+
+.. code-block:: python
+
+    spawn_thread: bool = True
+    spawn_process: bool = False
+
+::

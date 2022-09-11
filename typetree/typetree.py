@@ -15,7 +15,7 @@ except (ModuleNotFoundError, ImportError):
     from .viewer import tree_viewer
 
 __all__ = [
-    'SubTree',
+    'Tree',
     'print_tree',
     'view_tree',
 ]
@@ -178,7 +178,7 @@ class Config:
     """Configuration class for generating a new Tree.
 
     Attributes:
-        items_lookup: Function used to access the node's content
+        items_lookup: Function used to access the node's content.
         type_name_lookup: Function used to get the type name.
         value_lookup: Function used to get the value when the node's
             content is empty (tree leaves).
@@ -371,7 +371,7 @@ class SubTree:
                  nodes_visited: int, ancestors_ids: set, depth: int):
         self._key: _NodeKey = node_key
         self.config: Config = config
-        nodes_visited += 1
+        nodes_visited += 1  # Include itself
         self._overflowed: bool = False
         if nodes_visited >= self.config.max_search:
             self._overflowed = True
@@ -381,8 +381,8 @@ class SubTree:
         self._node_text: str = ' . . .'
         self._branches: tuple[SubTree, ...] = ()
         self._visible_branches: tuple[SubTree, ...] = ()
+        depth += 1  # Include itself
         self._too_deep: bool = depth > self.config.max_depth
-        depth += 1
         branches: list[SubTree] = []
         if not (self._too_deep or self._overflowed):
             for _node_key, var in self._node.branches.items():
@@ -631,10 +631,8 @@ class SubTree:
 class Tree(SubTree):
     """Build a recursive object tree structure"""
 
-    def __init__(self, obj: Any, config: Config | None = None,
-                 key_text: str | None = None):
-        if config is None:
-            config = Config()
+    def __init__(self, obj: Any, key_text: str | None = None, **kwargs):
+        config = Config(**kwargs)
         super().__init__(obj, _NodeKey(_KeyType.NONE, key_text), config,
                          nodes_visited=1, ancestors_ids={id(obj)}, depth=0)
 
@@ -660,56 +658,69 @@ class Tree(SubTree):
         """Print a tree view of the object's type structure"""
         print(self.get_tree_str())
 
-    def view(self, spawn_thread=True, spawn_process=False):
+    def view(self, spawn_thread: bool = True, spawn_process: bool = False):
         """Show a tree view of the object's type structure in an
         interactive Tkinter window."""
-        tree_viewer(self, spawn_thread=spawn_thread,
+        tree_viewer(self,
+                    spawn_thread=spawn_thread,
                     spawn_process=spawn_process)
 
 
-def print_tree(obj: Any, config: Config | None = None):
+def print_tree(obj: Any, **kwargs):
     """Print a tree view of the object's type structure"""
-    Tree(obj, config).print()
+    Tree(obj, **kwargs).print()
 
 
-def view_tree(obj: Any, config: Config | None = None, *,
-              spawn_thread=True, spawn_process=False):
+def view_tree(obj: Any, *,
+              spawn_thread: bool = True,
+              spawn_process: bool = False,
+              **kwargs):
     """Show a tree view of the object's type structure in an interactive
     Tkinter window."""
-    Tree(obj, config).view(spawn_thread=spawn_thread,
-                           spawn_process=spawn_process)
+    Tree(obj, **kwargs).view(spawn_thread=spawn_thread,
+                             spawn_process=spawn_process)
 
 
 if __name__ == '__main__':
     d1 = [{'a', 'b', 1, 2, (3, 4), (5, 6), 'c', .1}, {'a': 0, 'b': ...}]
-    print_tree(d1, Config(show_lengths=False))
+    print_tree(d1, show_lengths=False)
     print()
 
     obj1 = Tree(0)
-    print_tree(obj1, Config(include_dir=True, max_depth=3, max_lines=15))
+    print_tree(obj1, include_dir=True, max_depth=3, max_lines=15)
     print()
 
     import urllib.request
     import xml.etree.ElementTree
+    url1 = 'https://www.w3schools.com/xml/simple.xml'
+    with urllib.request.urlopen(url1) as response1:
+        r1 = response1.read()
+    text1 = str(r1, encoding='utf-8')
+    tree1 = xml.etree.ElementTree.fromstring(text1)
+    print_tree(
+        tree1,
+        type_name_lookup=lambda x: x.tag,
+        value_lookup=lambda x: x.text,
+    )
+    print()
+
     import xml.dom.minidom
-
-    url = 'https://www.w3schools.com/xml/simple.xml'
-    with urllib.request.urlopen(url) as response:
-        r = response.read()
-    text = str(r, encoding='utf-8')
-    tree = xml.etree.ElementTree.fromstring(text)
-    dom = xml.dom.minidom.parseString(text)
-
-    print_tree(dom, Config(
+    dom1 = xml.dom.minidom.parseString(text1)
+    print_tree(
+        dom1,
         items_lookup=lambda x: x.childNodes,
         type_name_lookup=lambda x: x.nodeName,
         value_lookup=lambda x: x.text,
         max_search=15,
-    ))
+    )
     print()
 
-    print_tree(tree, Config(
-        type_name_lookup=lambda x: x.tag,
-        value_lookup=lambda x: x.text,
-    ))
+    print_tree((0,), include_dir=True, max_depth=2, max_lines=15)
     print()
+
+    url2 = 'https://archive.org/metadata/TheAdventuresOfTomSawyer_201303'
+    with urllib.request.urlopen(url2) as response2:
+        r2 = response2.read()
+    text2 = str(r2, encoding='utf-8')
+    json2 = json.loads(text2)
+    view_tree(json2)
