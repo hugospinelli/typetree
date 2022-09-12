@@ -155,30 +155,25 @@ attribute lookup, which can be specified by the parameter
         items_lookup=lambda x: x.childNodes,
         type_name_lookup=lambda x: x.nodeName,
         value_lookup=lambda x: x.text,
-        max_search=15,
+        max_search=10,
     )
 
 ::
 
  <#document>[1]
- └── [0]: <breakfast_menu>[11]
-     ├── [0]: <#text>
-     ├── [1]: <food>[9]
-     │   ├── [0]: <#text>
-     │   ├── [1]: <name>[1]
-     │   │   └── [0]: <#text>
-     │   ├── [2]: <#text>
-     │   ├── [3]: <price>[1]
-     │   │   └── [0]: <#text>
-     │   ├── [4]: <#text>
-     │   ├── [5]: <description>[1]
-     │   │   └── [0]: <#text>
-     │   ├── [6]: <#text>
-     │   ├── [7]: <calories>[1]
-     │   ...
-     ├── [2]: <#text>
-     ├── [3]: <food>[9]
-     ...
+ ├── [0]: <breakfast_menu>[11]
+ │   ├── [0]: <#text>
+ │   ├── [1]: <food>[9]
+ │   │   ├── [0]: <#text>
+ │   │   ├── [1]: <name>[1]
+ │   │   │   └── [0]: <#text>
+ │   │   ├── [2]: <#text>
+ │   │   ├── [3]: <price>[1]
+ │   │   │   ├── [0]: <#text>
+ │   │   │   ...
+ │   │   ...
+ │   ...
+ ...
 
 Alternatively, you can use configuration templates:
 
@@ -186,7 +181,9 @@ Alternatively, you can use configuration templates:
 
     typetree.print_tree(dom, config=typetree.Format.DOM, max_search=15)
 
-Which gives the same output.
+Which gives the same output. The extra vertical line on :code:`<#document>[1]`
+indicates that additional items might be present, but the search was
+interrupted.
 
 **Interactive GUI**
 

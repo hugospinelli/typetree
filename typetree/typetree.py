@@ -415,7 +415,7 @@ class _SubtreeCreator:
                                           nodes_visited, ancestors_ids.copy(),
                                           depth + 1)
                 # noinspection PyProtectedMember
-                nodes_visited = branch._info.nodes_visited
+                nodes_visited = branch._nodes_visited
                 branches.append(branch)
                 if nodes_visited >= self.config.max_search:
                     overflowed = True
@@ -434,6 +434,7 @@ class _SubtreeCreator:
         self.subtree._key = node_key
         self.subtree._config = config
         self.subtree._info = info
+        self.subtree._nodes_visited = nodes_visited
         self.subtree._node_text = str(info)
         self.subtree._overflowed = overflowed
         self.subtree._maxed_depth = maxed_depth
@@ -549,6 +550,7 @@ class Subtree(tuple):
         self._key: _NodeKey = self._key
         self._config: Config = self._config
         self._info: _NodeInfo = self._info
+        self._nodes_visited: int = self._nodes_visited
         self._node_text: str = self._node_text
         self._overflowed: bool = self._overflowed
         self._maxed_depth: bool = self._maxed_depth
@@ -774,10 +776,10 @@ if __name__ == '__main__':
 
     import xml.dom.minidom
     dom1 = xml.dom.minidom.parseString(text1)
-    print_tree(dom1, config=Format.DOM, max_search=15)
+    print_tree(dom1, config=Format.DOM, max_search=18)
     print()
 
-    print_tree((0,), include_dir=True, max_depth=2, max_lines=15)
+    print_tree((0,), include_dir=True, max_depth=2, max_lines=18)
     print()
 
     url2 = 'https://archive.org/metadata/TheAdventuresOfTomSawyer_201303'
