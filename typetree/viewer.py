@@ -1,9 +1,8 @@
-import dataclasses
 import math
 import multiprocessing
 import threading
 import tkinter as tk
-from typing import Any
+from typing import Any, Optional
 
 try:
     from ico import load_ico
@@ -51,11 +50,11 @@ class TreeNode:
     line_style: dict[str, Any] = {'fill': 'gray60'}  # , 'dash': (1, 1)}
     label_style: dict[str, dict[str, Any]] = {
         'normal': {
-            'foreground': '#000000',
-            'background': '#ffffff',
+            'foreground': 'black',
+            'background': 'gray97',
         },
         'selected': {
-            'foreground': '#000000',
+            'foreground': 'black',
             'background': 'gray60',
         },
     }
@@ -76,7 +75,8 @@ class TreeNode:
         cls.text_pad = round(size*cls.text_pad_factor)
         cls.icon_size = size*cls.icon_size_factor
 
-    def __init__(self, root, parent, tree):
+    def __init__(self, root: 'ViewTreeWindow', parent: Optional['TreeNode'],
+                 tree: 'PicklableTree'):
         self.font: tuple[str, int] = ('Consolas', self.font_size)
         # Cache of PhotoImage instances for icons
         self.icons: dict[str, tk.PhotoImage] = {}
@@ -96,17 +96,14 @@ class TreeNode:
 
         self.root.n_lines += 1
         self.lines_maxed: bool = False
-        if not self.tree.too_deep:
-            self.root.all_nodes.append(self)
-            if self.tree.overflowed:
-                self.root.n_lines += 1
-        for branch in tree.visible_branches:
+        self.root.all_nodes.append(self)
+        if self.tree.overflowed or self.tree.maxed_depth:
+            self.root.n_lines += 1
+        for branch in tree:
             if self.root.n_lines >= self.tree.max_lines:
                 self.lines_maxed = True
                 break
             self.children.append(TreeNode(self.root, self, branch))
-            if branch.too_deep:
-                break
 
     def refresh(self):
         """Refresh the whole canvas"""
@@ -144,18 +141,15 @@ class TreeNode:
         Return the next available vertical position for drawing.
         """
         dy = self.row_height//2
-        icon_width = self.draw_icon(self, x + dy, y + dy)
+        icon_width = self.draw_icon(x + dy, y + dy)
         self.x = x + (self.row_height + icon_width)//2 + self.text_pad
         self.y = y
-        if self.tree.too_deep:
-            # Max depth reached -- draw ellipsis
-            self.draw_overflow(self.x, y)
-            return y + self.row_height
         self.draw_text()
         x2 = x + self.indent_width
         y2 = y + self.row_height
 
-        if not (self.children or self.lines_maxed):
+        if (not self.children and not self.lines_maxed
+                and not self.tree.maxed_depth):
             return y2
         if not self.is_expanded:
             return y2
@@ -163,41 +157,51 @@ class TreeNode:
         line_x = x + dy
         line_y = y2 + dy
         last_y = line_y
+
+        if (self.tree.is_expandable and self.tree.maxed_depth
+                and not self.tree.overflowed):
+            # If max depth reached, draw ellipsis
+            last_y = line_y
+            # Horizontal line
+            self.draw_line(line_x, line_y, self.indent_width, 0)
+            self.draw_overflow(x2 + dy + self.text_pad, y2)
+            y2 += self.row_height
+            line_y = y2 + dy
+
         for child in self.children:
             last_y = line_y
             # Horizontal line
-            self.canvas.create_line(line_x, line_y,
-                                    line_x + self.indent_width, line_y,
-                                    **self.line_style)
+            self.draw_line(line_x, line_y, self.indent_width, 0)
             y2 = child.draw(x2, y2)
             line_y = y2 + dy
-        # noinspection PyUnboundLocalVariable
-        if (self.lines_maxed or (self.tree.overflowed
-                                 and not child.tree.too_deep)):
-            # Max lines or max branches reached -- draw ellipsis
+
+        if self.lines_maxed or self.tree.overflowed:
+            # If max lines or max branches reached, draw ellipsis
             self.draw_overflow(line_x - self.text_pad, y2)
             last_y = y2 + self.row_height//4  # Small additional line
             y2 += self.row_height
 
         # Vertical line
-        _id = self.canvas.create_line(line_x, y + dy, line_x, last_y,
-                                      **self.line_style)
+        _id = self.draw_line(line_x, y + dy, 0, last_y - y - dy)
         self.canvas.tag_lower(_id)  # Display under the icons
 
         return y2
 
-    def draw_icon(self, node, x, y) -> int:
+    def draw_line(self, x: int, y: int, dx: int, dy: int) -> int:
+        return self.canvas.create_line(x, y, x + dx, y + dy, **self.line_style)
+
+    def draw_icon(self, x: int, y: int) -> int:
         """Draw the plus or the minus icon if it is expandable. Return
         the icon width.
         """
-        if not node.tree.expandable:
+        if not self.tree.is_expandable:
             return 0
-        if node.is_expanded:
+        if self.is_expanded:
             icon_name = 'minus'
-            callback = node.collapse
+            callback = self.collapse
         else:
             icon_name = 'plus'
-            callback = node.expand
+            callback = self.expand
         icon = self.get_icon(icon_name)
         _id = self.canvas.create_image(x, y, image=icon)
         self.canvas.tag_bind(_id, '<1>', callback)
@@ -240,7 +244,8 @@ class TreeNode:
             font=self.font, fill=self.label_style['normal']['foreground']
         )
 
-    def select(self, _=None, update_yview=True, update_last_selected=True):
+    def select(self, _event=None,
+               update_yview=True, update_last_selected=True):
         # Selection can switch directly or as a result of expanding or
         # collapsing node. If a selected node is collapsed, it remembers
         # the last selected node so that it can be highlighted after it
@@ -261,7 +266,7 @@ class TreeNode:
         if update_yview:
             self.update_yview()
 
-    def deselect(self, _=None):
+    def deselect(self, _event=None):
         if not self.is_selected:
             return
         self.is_selected = False
@@ -274,8 +279,8 @@ class TreeNode:
             return
         self.root.selected.deselect()
 
-    def expand(self, _=None):
-        if not self.tree.expandable:
+    def expand(self, _event=None):
+        if not self.tree.is_expandable:
             self.select()
             return
         if self.is_expanded:
@@ -287,8 +292,8 @@ class TreeNode:
             child.select(update_yview=False, update_last_selected=False)
         self.update_yview(from_expand=True)
 
-    def collapse(self, _=None):
-        if not self.tree.expandable:
+    def collapse(self, _event=None):
+        if not self.tree.is_expandable:
             return
         if not self.is_expanded:
             return
@@ -301,12 +306,12 @@ class TreeNode:
                 and self.root.last_selected.is_descendant(self)):
             self.select(update_last_selected=False)
 
-    def toggle_children(self, _=None):
+    def toggle_children(self, _event=None):
         """Toggle the expansion state of all child nodes. Use the
         majority state as the reference and apply the inverse state to
         every child node.
         """
-        if not self.tree.expandable:
+        if not self.tree.is_expandable:
             self.select()
             return
         if not self.children:
@@ -420,7 +425,7 @@ class TreeNode:
         self.icons[file_name] = image
         return image
 
-    def copy(self, _=None):
+    def copy(self, _event=None):
         """Copy to clipboard. Called on Ctrl+C or double-click"""
         if not self.is_selected:
             raise Exception('Copy called without being selected')
@@ -485,7 +490,7 @@ class ScrollbarFrame(tk.Frame):
         self.on_resize()
         self.canvas.focus_set()
 
-    def on_resize(self, _=None):
+    def on_resize(self, _event=None):
         """Reset the scroll region to encompass the inner frame"""
         _, _, x, y = self.canvas.bbox(tk.ALL)
         w = self.canvas.winfo_width()
@@ -572,15 +577,16 @@ class ScrollbarFrame(tk.Frame):
 class ViewTreeWindow(tk.Tk):
     width = 540
     height = 720
+    background_color = 'gray97'
 
-    def __init__(self, object_tree):
+    def __init__(self, tree):
         super().__init__()
         self.title('Tree View')
         self.geometry(f'{self.width}x{self.height}')
 
         TreeNode.update_dpi()
         self.sf = ScrollbarFrame(self, row_height=TreeNode.row_height,
-                                 bg='white', borderwidth=0,
+                                 bg=self.background_color, borderwidth=0,
                                  highlightthickness=0, takefocus=1)
         self.canvas = self.sf.canvas
         self.statusbar = tk.Label(self, text='', bd=1,
@@ -593,8 +599,8 @@ class ViewTreeWindow(tk.Tk):
         self.last_selected: TreeNode | None = None
         self.all_nodes: list[TreeNode] = []
         self.n_lines: int = 0
-        self.tree: PicklableTree = object_tree
-        self.node: TreeNode = TreeNode(self, None, object_tree)
+        self.tree: PicklableTree = tree
+        self.node: TreeNode = TreeNode(self, None, tree)
         self.node.refresh()
         self.node.expand()
         self.node.select()
@@ -618,12 +624,12 @@ class ViewTreeWindow(tk.Tk):
     def on_resize(self):
         self.sf.on_resize()
 
-    def copy(self, _=None):
+    def copy(self, _event=None):
         if self.selected is None:
             return 'break'
         self.selected.copy()
 
-    def move_up(self, _=None):
+    def move_up(self, _event=None):
         if self.selected is None:
             return 'break'
         index = max(self.selected.index, 1)
@@ -632,7 +638,7 @@ class ViewTreeWindow(tk.Tk):
                 node.select()
                 return
 
-    def move_down(self, _=None):
+    def move_down(self, _event=None):
         if self.selected is None:
             return 'break'
         index = self.selected.index
@@ -641,7 +647,7 @@ class ViewTreeWindow(tk.Tk):
                 node.select()
                 break
 
-    def collapse(self, _=None):
+    def collapse(self, _event=None):
         if self.selected is None:
             return 'break'
         if self.selected.is_visible:
@@ -649,7 +655,7 @@ class ViewTreeWindow(tk.Tk):
         else:
             self.move_up()
 
-    def expand(self, _=None):
+    def expand(self, _event=None):
         if self.selected is None:
             return 'break'
         if self.selected.is_visible:
@@ -657,34 +663,28 @@ class ViewTreeWindow(tk.Tk):
         else:
             self.move_down()
 
-    def toggle_children(self, _=None):
+    def toggle_children(self, _event=None):
         if self.selected is None or not self.selected.is_visible:
             return 'break'
         self.selected.toggle_children()
 
 
-@dataclasses.dataclass
-class PicklableTree:
-    visible_branches: tuple['PicklableTree', ...]
-    node_str: str
-    path: str
-    expandable: bool
-    overflowed: bool
-    too_deep: bool
-    max_lines: float
+class PicklableTree(tuple):
+    """Transform Tree into a simpler pickable object"""
+
+    def __new__(cls, tree):
+        return super().__new__(cls, map(PicklableTree, tree))
 
     def __init__(self, tree):
-        self.visible_branches = tuple(map(PicklableTree,
-                                          tree.visible_branches))
         self.node_str: str = tree.node_text
         self.path: str = tree.path
-        self.expandable: bool = tree.expandable
+        self.is_expandable: bool = tree.is_expandable
         self.overflowed: bool = tree.overflowed
-        self.too_deep: bool = tree.too_deep
-        self.max_lines: int = tree.config.max_lines
+        self.maxed_depth: bool = tree.maxed_depth
+        self.max_lines: float = tree.config.max_lines
 
 
-def tree_window_loop(object_tree: PicklableTree):
+def tree_window_loop(tree: PicklableTree):
     """Main loop for the GUI. Can be used concurrently, as a separate
     thread, or as a separate process.
     """
@@ -695,7 +695,7 @@ def tree_window_loop(object_tree: PicklableTree):
     if SET_DPI_AWARENESS and windll is not None:
         windll.shcore.SetProcessDpiAwareness(1)
 
-    window = ViewTreeWindow(object_tree)
+    window = ViewTreeWindow(tree)
     window.mainloop()
 
 

@@ -83,7 +83,7 @@ likely freeze.
 
 .. code-block:: python
 
-    typetree.print_tree((0,), include_dir=True, max_depth=2, max_lines=15)
+    typetree.print_tree((0,), include_dir=True, max_depth=2, max_lines=14)
 
 ::
 
@@ -98,10 +98,12 @@ likely freeze.
      ├── .denominator: <int>
      │   └── ...
      ├── .from_bytes: <builtin_function_or_method>
-     ├── .imag: <int>
-     │   └── ...
-     ├── .numerator: <int>
+     ├── .imag: <...> <int>
+     ├── .numerator: <...> <int>
  ...
+
+Note that the last two items have a special tag :code:`<...>` which means it
+has identified an infinite recursion.
 
 **XML etree integration**
 
@@ -172,9 +174,19 @@ attribute lookup, which can be specified by the parameter
      │   ├── [5]: <description>[1]
      │   │   └── [0]: <#text>
      │   ├── [6]: <#text>
+     │   ├── [7]: <calories>[1]
      │   ...
      ├── [2]: <#text>
+     ├── [3]: <food>[9]
      ...
+
+Alternatively, you can use configuration templates:
+
+.. code-block:: python
+
+    typetree.print_tree(dom, config=typetree.Format.DOM, max_search=15)
+
+Which gives the same output.
 
 **Interactive GUI**
 
@@ -193,6 +205,12 @@ attribute lookup, which can be specified by the parameter
 
 .. image:: https://raw.githubusercontent.com/hugospinelli/typetree/master/docs/_static/GUI_Example1.png
    :align: center
+
+- Double click or press Ctrl+C to copy the path to the selected node.
+- Use right-click on the plus/minus icons to expand/collapse each of the inner
+  nodes without affecting the node you clicked on.
+- You can use the arrow keys to navigate and the space bar instead of
+  the right-click.
 
 Parameters
 ----------
@@ -243,6 +261,15 @@ Parameters
 - :python:`max_lines`: Maximum number of lines to be printed. For the GUI,
   it is the maximum number of rows to be displayed, not including the extra
   ellipsis at the end. Can be disabled by setting it to infinity.
+
+Additionally, there is a helper class :python:`Format` which contains
+configuration templates for common object types. Currently, the templates are:
+
+- :python:`Format.DOM`
+- :python:`Format.HTML`
+- :python:`Format.XML`
+
+These templates can be passed to the parameter :python:`config`.
 
 **GUI**
 

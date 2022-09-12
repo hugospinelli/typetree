@@ -7,7 +7,7 @@ import json
 import re
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Type
 
 try:
     from viewer import tree_viewer
@@ -107,6 +107,7 @@ class _NodeKey:
                 self._slice = value, value + 1
             else:
                 self._slice = value
+        # Hash is unique for Sets
         self._hash: int = hash((
             type(self),
             self._type,
@@ -161,6 +162,8 @@ class _NodeKey:
                 return self._type < other._type
             return self._slice < other._slice
         if self._type == other._type:
+            if self._type == _KeyType.SET:
+                return self._hash < other._hash
             return self._str < other._str
         return self._type < other._type
 
@@ -220,12 +223,32 @@ class Config:
     max_lines: float = _DEFAULT_MAX_LINES
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class _XML(Config):
+    type_name_lookup: Callable[[Any], str] = lambda x: x.tag
+    value_lookup: Callable[[Any], Any] = lambda x: x.text
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class _DOM(Config):
+    items_lookup: Callable[[Any], Any] = lambda x: x.childNodes
+    type_name_lookup: Callable[[Any], str] = lambda x: x.nodeName
+    value_lookup: Callable[[Any], Any] = lambda x: x.text
+
+
+class Format:
+    """Helpers for configuring Tree"""
+    DOM: _DOM = _DOM
+    HTML: _XML = _XML
+    XML: _XML = _XML
+
+
 class _MaxSearchError(Exception):
     """Reached maximum number of nodes to be searched"""
     pass
 
 
-class _Node:
+class _NodeInfo:
     """Non-recursive tree node"""
 
     def __init__(self, var: Any, node_key: _NodeKey, config: Config,
@@ -235,12 +258,7 @@ class _Node:
         self.path: str = node_key.path
         self.config: Config = config
         self.nodes_visited: int = nodes_visited
-        self.ancestors_ids: set = ancestors_ids
-        var_id: int = id(var)
-        # TODO: check for infinite recursion
-        if var_id in self.ancestors_ids:
-            ...
-        self.ancestors_ids.add(var_id)
+        is_infinite_recursion: bool = id(var) in ancestors_ids
 
         self.type_name: str
         try:
@@ -258,33 +276,15 @@ class _Node:
         self.get_items_info(var, original_var)
 
         self.branches: dict[_NodeKey, Any] = {}
-        try:
-            if self.config.include_attributes and hasattr(var, '__dict__'):
-                for key, value in vars(var).items():
-                    if self.include_attr(key):
-                        self.add_branch(_KeyType.ATTR, key, value)
-            if self.config.include_dir:
-                for key in dir(var):
-                    if self.include_attr(key):
-                        try:
-                            value = getattr(var, key)
-                        except AttributeError:
-                            continue
-                        self.add_branch(_KeyType.ATTR, key, value)
-            match self.items_key_type:
-                case _KeyType.MAP:
-                    for key, value in var.items():
-                        self.add_branch(_KeyType.MAP, key, value)
-                case _KeyType.INDEX:
-                    for index, value in enumerate(var):
-                        self.add_branch(_KeyType.INDEX, index, value)
-                case _KeyType.SET:
-                    for value in var:
-                        self.add_branch(_KeyType.SET, 1, value)
-        except _MaxSearchError:
-            pass
+        if not is_infinite_recursion:
+            try:
+                self.add_branches(var)
+            except _MaxSearchError:
+                pass
 
         self.var_repr: str = f'<{self.type_name}>'
+        if is_infinite_recursion:
+            self.var_repr = f'<...> {self.var_repr}'
         if self.config.show_lengths and self.items_len is not None:
             self.var_repr = f'{self.var_repr}[{self.items_len}]'
 
@@ -339,6 +339,30 @@ class _Node:
         self.items_len = size
         return
 
+    def add_branches(self, var: Any):
+        if self.config.include_attributes and hasattr(var, '__dict__'):
+            for key, value in vars(var).items():
+                if self.include_attr(key):
+                    self.add_branch(_KeyType.ATTR, key, value)
+        if self.config.include_dir:
+            for key in dir(var):
+                if self.include_attr(key):
+                    try:
+                        value = getattr(var, key)
+                    except AttributeError:
+                        continue
+                    self.add_branch(_KeyType.ATTR, key, value)
+        match self.items_key_type:
+            case _KeyType.MAP:
+                for key, value in var.items():
+                    self.add_branch(_KeyType.MAP, key, value)
+            case _KeyType.INDEX:
+                for index, value in enumerate(var):
+                    self.add_branch(_KeyType.INDEX, index, value)
+            case _KeyType.SET:
+                for value in var:
+                    self.add_branch(_KeyType.SET, 1, value)
+
     def add_branch(self, key_type: _KeyType, key: Any, value: Any):
         if self.nodes_visited >= self.config.max_search:
             raise _MaxSearchError
@@ -360,90 +384,61 @@ class _Node:
         return f'{type(self).__name__}({self})'
 
 
-@functools.total_ordering
-class SubTree:
-    """A recursive object tree structure"""
-
-    def __init__(self, obj: Any, node_key: _NodeKey, config: Config,
+class _SubtreeCreator:
+    """Create a Subtree instance. Used for pre-computing and analysing
+    the branches. Needed because Subtree inherits from tuple, which is
+    immutable, and the creation process is too complex to be done
+    inside __new__.
+    """
+    def __init__(self, base_cls: tuple, cls: Type['Subtree'],
+                 obj: Any, node_key: _NodeKey, config: Config,
                  nodes_visited: int, ancestors_ids: set, depth: int):
-        self._key: _NodeKey = node_key
         self.config: Config = config
-        nodes_visited += 1  # Include itself
-        self._overflowed: bool = False
-        if nodes_visited >= self.config.max_search:
-            self._overflowed = True
-        self._node: _Node = _Node(obj, self._key, self.config,
-                                  nodes_visited, ancestors_ids)
+        self.all_branches: tuple[Subtree, ...] = ()
 
-        self._node_text: str = ' . . .'
-        self._branches: tuple[SubTree, ...] = ()
-        self._visible_branches: tuple[SubTree, ...] = ()
-        depth += 1  # Include itself
-        self._too_deep: bool = depth > self.config.max_depth
-        branches: list[SubTree] = []
-        if not (self._too_deep or self._overflowed):
-            for _node_key, var in self._node.branches.items():
-                branch: SubTree = SubTree(var, _node_key, self.config,
-                                          nodes_visited, ancestors_ids, depth)
-                nodes_visited = branch._node.nodes_visited
+        nodes_visited += 1  # Include itself
+        overflowed: bool = False
+        if nodes_visited > self.config.max_search:
+            overflowed = True
+        info: _NodeInfo = _NodeInfo(obj, node_key, self.config,
+                                    nodes_visited, ancestors_ids)
+        ancestors_ids.add(id(obj))
+
+        maxed_depth: bool = bool(depth >= self.config.max_depth
+                                 and info.branches)
+        branches: list[Subtree] = []
+        max_branches: int = 0
+        if not maxed_depth and not overflowed:
+            for _node_key, var in info.branches.items():
+                branch: Subtree = Subtree(var, _node_key, self.config,
+                                          nodes_visited, ancestors_ids.copy(),
+                                          depth + 1)
+                # noinspection PyProtectedMember
+                nodes_visited = branch._info.nodes_visited
                 branches.append(branch)
                 if nodes_visited >= self.config.max_search:
-                    self._overflowed = True
+                    overflowed = True
                     break
-            self._branches = tuple(branches)
-            self._group_branches()
-            self._node_text = str(self._node)
+            self.all_branches = tuple(branches)
+            self.group_branches()
             # noinspection PyTypeChecker
-            max_branches: int = min(len(self._branches),
-                                    self.config.max_branches)
-            self._visible_branches = tuple(self._branches[:max_branches])
-        self._overflowed = self._overflowed or (len(self._branches)
-                                                > self.config.max_branches)
-        self._expandable: bool = bool(self._visible_branches)
+            max_branches = min(len(self.all_branches),
+                               self.config.max_branches)
+        overflowed = overflowed or (len(self.all_branches)
+                                    > self.config.max_branches)
 
-        self._hash: int = hash((
-            self._node.var_repr,
-            self._node.key.type,
-            tuple(map(hash, self._branches))
-        ))
-
-        self._path: str = self._key.path
-        self._update_paths()
-
-    @property
-    def key(self) -> _NodeKey:
-        return self._key
-
-    @property
-    def branches(self) -> tuple['SubTree', ...]:
-        return self._branches
-
-    @property
-    def node_text(self) -> str:
-        return self._node_text
-
-    @property
-    def path(self) -> str:
-        return self._path
-
-    @property
-    def expandable(self) -> bool:
-        return self._expandable
-
-    @property
-    def too_deep(self) -> bool:
-        return self._too_deep
-
-    @property
-    def overflowed(self) -> bool:
-        return self._overflowed
-
-    @property
-    def visible_branches(self) -> tuple['SubTree', ...]:
-        return self._visible_branches
+        self.subtree: Subtree = base_cls.__new__(
+            cls, self.all_branches[:max_branches]
+        )
+        self.subtree._key = node_key
+        self.subtree._config = config
+        self.subtree._info = info
+        self.subtree._node_text = str(info)
+        self.subtree._overflowed = overflowed
+        self.subtree._maxed_depth = maxed_depth
 
     @staticmethod
-    def _group_to_map(v: list[set[int]]) -> dict[tuple[int, int], int]:
+    def group_to_map(v: list[set[int]]) -> dict[tuple[int, int], int]:
         """Argument v is a list of indices grouped in sets that map to
         the same structure in a Sequence tree. Their positions indicate
         where they map to. Example:
@@ -475,17 +470,19 @@ class SubTree:
         # noinspection PyTypeChecker
         return dict(sorted(u.items()))
 
-    def _group_branches(self):
-        if not self._branches:
+    # noinspection PyProtectedMember
+    def group_branches(self):
+        """Group equivalent branches (with the same type structure)"""
+        if not self.all_branches:
             return
         # Group unique consecutive Sequence branches and
         # unique Collection branches
-        unique_index_branches: list[SubTree] = []
-        all_index_branches: list[list[SubTree]] = []
+        unique_index_branches: list[Subtree] = []
+        all_index_branches: list[list[Subtree]] = []
         index_keys: list[set[int]] = []
-        unique_set_branches: list[SubTree] = []
-        added_branches: list[SubTree] = []
-        for branch in self._branches:
+        unique_set_branches: list[Subtree] = []
+        added_branches: list[Subtree] = []
+        for branch in self.all_branches:
             if branch._key.type == _KeyType.INDEX:
                 range_key = range(*branch._key.slice)
                 try:
@@ -509,7 +506,7 @@ class SubTree:
                 added_branches.append(branch)
 
         unique_index_branches.clear()
-        for _range, index in self._group_to_map(index_keys).items():
+        for _range, index in self.group_to_map(index_keys).items():
             branch = all_index_branches[index].pop()
             if self.config.show_lengths:
                 branch._update_key(_NodeKey(_KeyType.INDEX, _range))
@@ -522,43 +519,111 @@ class SubTree:
         for branch in unique_set_branches:
             branch._update_key(branch._key)
 
-        self._branches = tuple(added_branches + unique_index_branches
-                               + unique_set_branches)
+        self.all_branches = tuple(added_branches
+                                  + unique_index_branches
+                                  + unique_set_branches)
         if self.config.sort_keys:
-            self._branches = tuple(sorted(self._branches,
-                                          key=lambda x: x.key))
+            self.all_branches = tuple(sorted(self.all_branches,
+                                             key=lambda x: x.key))
         else:
-            self._branches = tuple(sorted(self._branches,
-                                          key=lambda x: x.key.type))
+            self.all_branches = tuple(sorted(self.all_branches,
+                                             key=lambda x: x.key.type))
+
+
+@functools.total_ordering
+class Subtree(tuple):
+    """A recursive object tree structure"""
+
+    def __new__(cls, obj: Any, node_key: _NodeKey, config: Config,
+                nodes_visited: int, ancestors_ids: set, depth: int):
+        creator: _SubtreeCreator = _SubtreeCreator(
+            super(), cls,
+            obj, node_key, config, nodes_visited, ancestors_ids, depth
+        )
+        return creator.subtree
+
+    # noinspection PyUnresolvedReferences
+    def __init__(self, *_args, **_kwargs):
+        # Prevent propagation of warnings
+        self._key: _NodeKey = self._key
+        self._config: Config = self._config
+        self._info: _NodeInfo = self._info
+        self._node_text: str = self._node_text
+        self._overflowed: bool = self._overflowed
+        self._maxed_depth: bool = self._maxed_depth
+
+        self._update_paths()
+        # Hash is unique if overflowed or max depth reached because
+        # the tree is incomplete and equality between incomplete trees
+        # cannot be established.
+        self._hash: int = hash((
+            self._info.var_repr,
+            self._info.key.type,
+            id(self)*(self._overflowed or self._maxed_depth),
+            tuple(map(hash, self)),
+        ))
+        self._path: str = self._key.path
+        self._update_paths()
+        self._is_expandable: bool = bool(self or self._overflowed
+                                         or self._maxed_depth)
+
+    @property
+    def config(self) -> Config:
+        return self._config
+
+    @property
+    def is_expandable(self) -> bool:
+        return self._is_expandable
+
+    @property
+    def key(self) -> _NodeKey:
+        return self._key
+
+    @property
+    def maxed_depth(self) -> bool:
+        return self._maxed_depth
+
+    @property
+    def node_text(self) -> str:
+        return self._node_text
+
+    @property
+    def overflowed(self) -> bool:
+        return self._overflowed
+
+    @property
+    def path(self) -> str:
+        return self._path
 
     def _update_key(self, new_key: _NodeKey):
         self._key = new_key
-        self._node.key = new_key
-        self._node_text = str(self._node)
+        self._info.key = new_key
+        self._node_text = str(self._info)
         self._update_paths()
 
+    # noinspection PyProtectedMember
     def _update_paths(self, parent_path: str = ''):
         if self._key.type == _KeyType.SET:
             self._path = f'{parent_path}.copy().pop()'
         else:
             self._path = f'{parent_path}{self._key.path}'
-        for branch in self._branches:
+        for branch in self:
             branch._update_paths(self._path)
 
     def _get_tree_lines(self, root_pad: str = '',
                         branch_pad: str = '') -> list[str]:
-        if self._too_deep and self._node.branches:
-            return [f'{root_pad}{self._node}',
-                    f'{branch_pad}└── ...']
-
-        lines: list[str] = [f'{root_pad}{self._node}']
-        if not self._visible_branches:
+        lines: list[str] = [f'{root_pad}{self._node_text}']
+        if self._maxed_depth and self._is_expandable:
+            lines.append(f'{branch_pad}└── ...')
+            return lines
+        if not self:  # empty
             return lines
 
-        branches: tuple[SubTree, ...] = self._visible_branches
+        branches: Subtree = self
         if not self._overflowed:
-            branches = self._visible_branches[:-1]
+            branches = self[:-1]
         for branch in branches:
+            # noinspection PyProtectedMember
             lines.extend(branch._get_tree_lines(
                 root_pad=f'{branch_pad}├── ',
                 branch_pad=f'{branch_pad}│   ',
@@ -567,56 +632,59 @@ class SubTree:
             lines.append(f'{branch_pad}...')
         else:
             # noinspection PyProtectedMember
-            lines.extend(self._branches[-1]._get_tree_lines(
+            lines.extend(self[-1]._get_tree_lines(
                 root_pad=f'{branch_pad}└── ',
                 branch_pad=f'{branch_pad}    ',
             ))
-        if len(lines) > self.config.max_lines:
-            del lines[self.config.max_lines - 1:]
+        if len(lines) > self._config.max_lines:
+            del lines[self._config.max_lines - 1:]
             lines.append(' ...')
         return lines
 
+    # noinspection PyProtectedMember
     def get_dict(self) -> str | dict[str, str | dict]:
-        if not self._branches:
-            return str(self._node)
+        if not self:  # empty
+            return str(self._info)
         return {
-            str(branch._node): branch.get_dict()
-            for branch in self._branches
+            str(branch._info): branch.get_dict()
+            for branch in self
         }
 
-    def __eq__(self, other: 'SubTree') -> bool:
+    def __eq__(self, other: 'Subtree') -> bool:
         if not isinstance(other, type(self)):
             raise TypeError
         if self._hash != other._hash:
             return False
-        if self._node.var_repr != other._node.var_repr:
+        if self._info.var_repr != other._info.var_repr:
             return False
-        if self._node.key.type != other._node.key.type:
+        if self._info.key.type != other._info.key.type:
             return False
-        return self._branches == other._branches
+        if self._overflowed or self._maxed_depth:
+            return False
+        return super().__eq__(other)
 
-    def __lt__(self, other: 'SubTree') -> bool:
+    def __lt__(self, other: 'Subtree') -> bool:
         if not isinstance(other, type(self)):
             raise TypeError
         if self == other:
             return False
-        if self._node.key.type != other._node.key.type:
-            if self._node.key.type is None:
+        if self._info.key.type != other._info.key.type:
+            if self._info.key.type is None:
                 return True
-            if other._node.key.type is None:
+            if other._info.key.type is None:
                 return False
-            return self._node.key.type < other._node.key.type
-        if self._node.var_repr != other._node.var_repr:
-            return self._node.var_repr < other._node.var_repr
-        if len(self._branches) != len(other._branches):
-            return len(self._branches) < len(other._branches)
-        for x, y in zip(self._branches, other._branches):
+            return self._info.key.type < other._info.key.type
+        if self._info.var_repr != other._info.var_repr:
+            return self._info.var_repr < other._info.var_repr
+        if len(self) != len(other):
+            return len(self) < len(other)
+        for x, y in zip(self, other):
             if x != y:
                 return x < y
-        return False
+        return self._hash < other._hash
 
     def __str__(self) -> str:
-        return f'{self._node!s}{{...}}'
+        return f'{self._info!s}{{...}}'
 
     def __repr__(self) -> str:
         return f'{type(self).__name__}({self!s})'
@@ -625,13 +693,17 @@ class SubTree:
         return self._hash
 
 
-class Tree(SubTree):
+class Tree(Subtree):
     """Build a recursive object tree structure"""
 
-    def __init__(self, obj: Any, key_text: str | None = None, **kwargs):
-        config = Config(**kwargs)
-        super().__init__(obj, _NodeKey(_KeyType.NONE, key_text), config,
-                         nodes_visited=1, ancestors_ids={id(obj)}, depth=0)
+    def __new__(cls, obj: Any, key_text: str | None = None,
+                config: Type[Config] = Config, **kwargs):
+        # noinspection PyArgumentList
+        config: Config = config(**kwargs)
+        return super().__new__(
+            cls, obj, _NodeKey(_KeyType.NONE, key_text), config,
+            nodes_visited=0, ancestors_ids=set(), depth=0
+        )
 
     def json(self, *args, **kwargs) -> str:
         return json.dumps(self.get_dict(), *args, **kwargs)
@@ -696,22 +768,12 @@ if __name__ == '__main__':
         r1 = response1.read()
     text1 = str(r1, encoding='utf-8')
     tree1 = xml.etree.ElementTree.fromstring(text1)
-    print_tree(
-        tree1,
-        type_name_lookup=lambda x: x.tag,
-        value_lookup=lambda x: x.text,
-    )
+    print_tree(tree1, config=Format.XML)
     print()
 
     import xml.dom.minidom
     dom1 = xml.dom.minidom.parseString(text1)
-    print_tree(
-        dom1,
-        items_lookup=lambda x: x.childNodes,
-        type_name_lookup=lambda x: x.nodeName,
-        value_lookup=lambda x: x.text,
-        max_search=15,
-    )
+    print_tree(dom1, config=Format.DOM, max_search=15)
     print()
 
     print_tree((0,), include_dir=True, max_depth=2, max_lines=15)
