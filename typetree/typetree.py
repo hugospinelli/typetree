@@ -15,6 +15,7 @@ except (ModuleNotFoundError, ImportError):
     from .viewer import tree_viewer
 
 __all__ = [
+    'Format',
     'Tree',
     'print_tree',
     'view_tree',
