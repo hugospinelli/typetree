@@ -32,23 +32,19 @@ _RANGE_REGEX = re.compile(r'^\[(\d+)(?::(\d+))?]$')
 @functools.total_ordering
 class _KeyType(enum.Enum):
     """Node key types. When printed, each type will display
-    the key differently based on their type."""
-
+    the key differently based on their type.
+    """
     # For the root node, which has no key
     NONE = 0
-
     # For object attributes (starts with a dot)
     # Example: .attr
     ATTR = 1
-
     # For Mapping keys
     # Examples: ['key'], [datetime.date(1970, 1, 1)]
     MAP = 2
-
     # For Sequence indices or slices
-    # Examples: [2], [4:7]
+    # Examples: [2], [4:7], [:3], [:]
     INDEX = 3
-
     # For Collection, which has no key, but has an item counter
     # Example: (×3)
     SET = 4
@@ -198,16 +194,16 @@ class Config:
             attributes.
         max_branches: Maximum number of branches displayed on each node.
             This only applies after grouping. Can be disabled by setting
-            it to float('inf') or math.inf.
+            it to infinity (float('inf') or math.inf).
         max_depth: Maximum display depth. Beware that the true search
             depth is one higher than specified. Can be disabled by
-            setting it to float('inf') or math.inf (not recommended).
+            setting it to infinity (not recommended).
         max_search: Maximum number of nodes searched. Can be disabled
-            by setting it to float('inf') or math.inf.
+            by setting it to infinity.
         max_lines: Maximum number of lines to be printed. For the GUI,
             it is the maximum number of rows to be displayed, not
             including the extra ellipsis at the end. Can be disabled by
-            setting it to float('inf') or math.inf.
+            setting it to infinity.
     """
     items_lookup: Callable[[Any], Any] = lambda var: var
     type_name_lookup: Callable[[Any], str] = lambda var: type(var).__name__
@@ -295,7 +291,8 @@ class _Node:
     def get_items_info(self, var: Any, original_var: Any):
         """Check which kind of iterable var is, if any, and return the
         _KeyType associated with its content and its size. Return
-        (_KeyType.NONE, None) if var is not a simple finite iterable."""
+        (_KeyType.NONE, None) if var is not a simple finite iterable.
+        """
         try:
             size = len(var)
         except TypeError:
@@ -458,8 +455,8 @@ class SubTree:
             The return value is a dict of sequential ranges of indices
         as keys and their mapping to unique_branches. In the previous
         case it will return {(0, 1): 0, (1, 2): 1, (2, 4): 0, (4, 5): 2,
-        (5, 6): 0, (6, 7): 1}."""
-
+        (5, 6): 0, (6, 7): 1}.
+        """
         if not v:
             return {}
         u = {}
@@ -660,7 +657,8 @@ class Tree(SubTree):
 
     def view(self, spawn_thread: bool = True, spawn_process: bool = False):
         """Show a tree view of the object's type structure in an
-        interactive Tkinter window."""
+        interactive Tkinter window.
+        """
         tree_viewer(self,
                     spawn_thread=spawn_thread,
                     spawn_process=spawn_process)
@@ -676,7 +674,8 @@ def view_tree(obj: Any, *,
               spawn_process: bool = False,
               **kwargs):
     """Show a tree view of the object's type structure in an interactive
-    Tkinter window."""
+    Tkinter window.
+    """
     Tree(obj, **kwargs).view(spawn_thread=spawn_thread,
                              spawn_process=spawn_process)
 
