@@ -681,7 +681,7 @@ class PicklableTree(tuple):
         self.is_expandable: bool = tree.is_expandable
         self.overflowed: bool = tree.overflowed
         self.maxed_depth: bool = tree.maxed_depth
-        self.max_lines: float = tree.config.max_lines
+        self.max_lines: float = tree.max_lines
 
 
 def tree_window_loop(tree: PicklableTree):

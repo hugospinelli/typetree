@@ -179,7 +179,7 @@ Alternatively, you can use configuration templates:
 
 .. code-block:: python
 
-    typetree.print_tree(dom, config=typetree.Format.DOM, max_search=15)
+    typetree.print_tree(dom, config=typetree.Format.DOM, max_search=10)
 
 Which gives the same output. The extra vertical line on :code:`<#document>[1]`
 indicates that additional items might be present, but the search was
@@ -225,9 +225,9 @@ Parameters
     include_dir: bool = False
     include_protected: bool = False
     include_special: bool = False
-    max_branches: float = 20
+    max_branches: float = 100
     max_depth: float = 10
-    max_search: float = 1000
+    max_search: float = 100_000
     max_lines: float = 1000
 
 - :python:`items_lookup`: Function used to access the node's content.
@@ -270,10 +270,10 @@ These templates can be passed to the parameter :python:`config`.
 
 **GUI**
 
-For the GUI, both the :python:`typetree.Tree(...).view` method and the
-:python:`typetree.view_tree` function accept two additional arguments
-to configure whether the new window is created asynchronously and by
-which method (threading or multiprocessing):
+For the GUI, both the :python:`Tree(...).view` method and the
+:python:`view_tree` function accept two additional arguments to configure
+whether the new window is created asynchronously and by which method
+(threading or multiprocessing):
 
 .. code-block:: python
 
