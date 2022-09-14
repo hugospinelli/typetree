@@ -224,7 +224,6 @@ Parameters
     max_search: float = 100_000
     max_depth: float = 20
     max_branches: float = float('inf')
-    depth_first: bool = False
 
 - :python:`items_lookup`: Function used to access the node's content.
 - :python:`type_name_lookup`: Function used to get the type name.

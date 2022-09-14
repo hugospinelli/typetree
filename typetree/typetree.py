@@ -840,7 +840,7 @@ if __name__ == '__main__':
     tree1 = xml.etree.ElementTree.fromstring(text1)
     print_tree(tree1, config=Format.XML)
     print()
-    
+
     import xml.dom.minidom
     dom1 = xml.dom.minidom.parseString(text1)
     print_tree(dom1, config=Format.DOM, max_lines=10)
