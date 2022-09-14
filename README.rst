@@ -83,7 +83,7 @@ likely freeze.
 
 .. code-block:: python
 
-    typetree.print_tree((0,), include_dir=True, max_depth=2, max_lines=14)
+    typetree.print_tree((0,), include_dir=True, max_depth=2, max_lines=15)
 
 ::
 
@@ -99,6 +99,7 @@ likely freeze.
      │   └── ...
      ├── .from_bytes: <builtin_function_or_method>
      ├── .imag: <...> <int>
+     │   └── ...
      ├── .numerator: <...> <int>
  ...
 
@@ -155,35 +156,29 @@ attribute lookup, which can be specified by the parameter
         items_lookup=lambda x: x.childNodes,
         type_name_lookup=lambda x: x.nodeName,
         value_lookup=lambda x: x.text,
-        max_search=10,
+        max_lines=10,
     )
 
 ::
 
  <#document>[1]
- ├── [0]: <breakfast_menu>[11]
- │   ├── [0]: <#text>
- │   ├── [1]: <food>[9]
- │   │   ├── [0]: <#text>
- │   │   ├── [1]: <name>[1]
- │   │   │   └── [0]: <#text>
- │   │   ├── [2]: <#text>
- │   │   ├── [3]: <price>[1]
- │   │   │   ├── [0]: <#text>
- │   │   │   ...
- │   │   ...
- │   ...
+ └── [0]: <breakfast_menu>[11]
+     ├── [0]: <#text>
+     ├── [1]: <food>[9]
+     │   ├── [0]: <#text>
+     │   ├── [1]: <name>[1]
+     │   │   └── [0]: <#text>
+     │   ├── [2]: <#text>
+     │   ├── [3]: <price>[1]
  ...
 
 Alternatively, you can use configuration templates:
 
 .. code-block:: python
 
-    typetree.print_tree(dom, config=typetree.Format.DOM, max_search=10)
+    typetree.print_tree(dom, config=typetree.Format.DOM, max_lines=10)
 
-Which gives the same output. The extra vertical line on :code:`<#document>[1]`
-indicates that additional items might be present, but the search was
-interrupted.
+Which gives the same output.
 
 **Interactive GUI**
 
@@ -225,10 +220,11 @@ Parameters
     include_dir: bool = False
     include_protected: bool = False
     include_special: bool = False
-    max_branches: float = 100
-    max_depth: float = 10
-    max_search: float = 100_000
     max_lines: float = 1000
+    max_search: float = 100_000
+    max_depth: float = 20
+    max_branches: float = float('inf')
+    depth_first: bool = False
 
 - :python:`items_lookup`: Function used to access the node's content.
 - :python:`type_name_lookup`: Function used to get the type name.
@@ -247,17 +243,18 @@ Parameters
   (:python:`_protected`) attributes.
 - :python:`include_special`: Flag for including the special
   (:python:`__special__`) attributes.
-- :python:`max_branches`: Maximum number of branches displayed on each
-  node This only applies after grouping. Can be disabled by setting it to
-  infinity (:python:`float('inf')` or :python:`math.inf`).
-- :python:`max_depth`: Maximum display depth. Beware that the true search
-  depth is one higher than specified. Can be disabled by setting it to
-  infinity (not recommended).
-- :python:`max_search`: Maximum number of nodes searched. Can be disabled
-  by setting it to infinity.
 - :python:`max_lines`: Maximum number of lines to be printed. For the GUI,
   it is the maximum number of rows to be displayed, not including the extra
-  ellipsis at the end. Can be disabled by setting it to infinity.
+  ellipsis at the end. Can be disabled by setting it to infinity
+  (:python:`float('inf')` or :python:`math.inf`).
+- :python:`max_search`: Maximum number of nodes searched. Can be disabled
+  by setting it to infinity (not recommended).
+- :python:`max_depth`: Maximum display depth. Beware that the true search
+  depth is one higher than specified. Can be disabled by setting it to
+  infinity.
+- :python:`max_branches`: Maximum number of branches displayed on each
+  node This only applies after grouping. Can be disabled by setting it to
+  infinity.
 
 Additionally, there is a helper class :python:`Format` which contains
 configuration templates for common object types. Currently, the templates are:

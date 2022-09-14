@@ -21,10 +21,10 @@ __all__ = [
     'view_tree',
 ]
 
-_DEFAULT_MAX_BRANCHES = 100
-_DEFAULT_MAX_DEPTH = 10
-_DEFAULT_MAX_SEARCH = 100_000
 _DEFAULT_MAX_LINES = 1000
+_DEFAULT_MAX_SEARCH = 100_000
+_DEFAULT_MAX_DEPTH = 20
+_DEFAULT_MAX_BRANCHES = float('inf')
 
 # Pre-compiled format for _KeyType.INDEX and _KeyType.SLICE
 _RANGE_REGEX = re.compile(r'^\[(\d+)(?::(\d+))?]$')
@@ -204,9 +204,6 @@ class Config:
             setting it to infinity (not recommended).
         max_search: Maximum number of nodes searched. Can be disabled
             by setting it to infinity.
-        depth_first: Flag for the search order (depth-first or
-            breadth-first). Setting it to True improves performance, but
-            might create unbalanced trees if max_search is reached.
         # TODO: move this somewhere else:
         max_lines: Maximum number of lines to be printed. For the GUI,
             it is the maximum number of rows to be displayed, not
@@ -222,9 +219,9 @@ class Config:
     include_dir: bool = False
     include_protected: bool = False
     include_special: bool = False
-    max_branches: float = _DEFAULT_MAX_BRANCHES
-    max_depth: float = _DEFAULT_MAX_DEPTH
     max_search: float = _DEFAULT_MAX_SEARCH
+    max_depth: float = _DEFAULT_MAX_DEPTH
+    max_branches: float = _DEFAULT_MAX_BRANCHES
     depth_first: bool = False
 
 
@@ -254,10 +251,10 @@ class _MaxSearchError(Exception):
 
 
 class _NodeInfo:
-    """Non-recursive tree node"""
+    """Non-recursive tree node info"""
 
-    def __init__(self, var: Any, node_key: _NodeKey, config: Config,
-                 nodes_searched: int, ancestors_ids: set):
+    def __init__(self, obj: Any, node_key: _NodeKey, config: Config,
+                 nodes_searched: int, ancestors_ids: set[int], depth: int):
 
         self.key: _NodeKey = node_key
         self.path: str = node_key.path
@@ -265,28 +262,28 @@ class _NodeInfo:
         self.nodes_searched: int = nodes_searched
         self.maxed_search: bool = False
         # For displaying an ellipsis indicating possible inner content
-        self.maxed_depth: bool = False
-        is_infinite_recursion: bool = id(var) in ancestors_ids
+        self.maxed_depth: bool = depth >= config.max_depth
+        is_infinite_recursion: bool = id(obj) in ancestors_ids
 
         self.type_name: str
         try:
             # noinspection PyArgumentList
-            self.type_name = self.config.type_name_lookup(var)
+            self.type_name = self.config.type_name_lookup(obj)
         except AttributeError:
             self.type_name = '?'
-        original_var: Any = var
+        original_var: Any = obj
         # noinspection PyArgumentList
-        var = self.config.items_lookup(var)
+        obj = self.config.items_lookup(obj)
 
         # These refer to the contents of Maps or Sequences
         self.items_key_type: _KeyType = _KeyType.NONE
         self.items_len: int | None = None
-        self.get_items_info(var, original_var)
+        self.get_items_info(obj, original_var)
 
         self.branches: dict[_NodeKey, Any] = {}
         if not is_infinite_recursion:
             try:
-                self.add_branches(var)
+                self.add_branches(obj)
             except _MaxSearchError:
                 pass
 
@@ -370,6 +367,8 @@ class _NodeInfo:
             case _KeyType.SET:
                 for value in var:
                     self.add_branch(_KeyType.SET, 1, value)
+        # Success -- do not display ellipsis indicating max depth exceeded
+        self.maxed_depth = False
 
     def add_branch(self, key_type: _KeyType, key: Any, value: Any):
         if self.nodes_searched >= self.config.max_search:
@@ -377,6 +376,8 @@ class _NodeInfo:
             if not self.branches:  # empty
                 # For displaying an ellipsis indicating possible inner content
                 self.maxed_depth = True
+            raise _MaxSearchError
+        if self.maxed_depth:
             raise _MaxSearchError
         node_key = _NodeKey(key_type, key)
         self.branches[node_key] = value
@@ -396,61 +397,84 @@ class _NodeInfo:
         return f'{type(self).__name__}({self})'
 
 
+class _InfoTree:
+    """A recursive tree builder of _NodeInfo"""
+
+    def __init__(self, obj: Any, node_key: _NodeKey, config: Config,
+                 nodes_searched: int, ancestors_ids: set[int], depth: int = 0):
+        self.config: Config = config
+        self.ancestors_ids: set[int] = ancestors_ids.copy()
+        self.depth: int = depth
+        self.node_info: _NodeInfo = _NodeInfo(
+            obj, node_key, config, nodes_searched, ancestors_ids, self.depth
+        )
+        self.nodes_searched: int = self.node_info.nodes_searched
+        self.ancestors_ids.add(id(obj))
+        self.is_complete: bool = not self.node_info.branches
+        self.maxed_depth: bool = (bool(self.depth >= config.max_depth
+                                       and self.node_info.branches)
+                                  or self.node_info.maxed_depth)
+        self.has_maxed_depth: bool = self.maxed_depth
+        self.branches: list[_InfoTree] = []
+        self.updated: bool = False
+
+    def update(self):
+        """Recursively call to update the deepest _InfoTree"""
+        if self.is_complete:
+            return
+        elif self.updated:
+            for info_tree in self.branches:
+                info_tree.nodes_searched = self.nodes_searched
+                info_tree.update()
+                self._update_info_tree(info_tree)
+        else:
+            self.updated = True
+            for key, var in self.node_info.branches.items():
+                info_tree: _InfoTree = _InfoTree(
+                    var, key, self.config, self.nodes_searched,
+                    self.ancestors_ids, self.depth + 1,
+                )
+                self.branches.append(info_tree)
+                self._update_info_tree(info_tree)
+        self.is_complete = all(info_tree.is_complete
+                               for info_tree in self.branches)
+
+    def _update_info_tree(self, info_tree: '_InfoTree'):
+        if info_tree.has_maxed_depth:
+            self.has_maxed_depth = True
+        if self.nodes_searched == info_tree.nodes_searched:
+            info_tree.is_complete = True
+        self.nodes_searched = info_tree.nodes_searched
+
+
 class _SubtreeCreator:
     """Create a Subtree instance. Used for pre-computing and analysing
     the branches. Needed because Subtree inherits from tuple, which is
     immutable, and the creation process is too complex to be done
     inside __new__.
     """
-    def __init__(self, base_cls: tuple, cls: Type['Subtree'], obj: Any,
-                 node_key: _NodeKey, max_lines: float, config: Config,
-                 nodes_searched: int, ancestors_ids: set, depth: int):
-        self.config: Config = config
-        self.all_branches: tuple[Subtree, ...] = ()
-
-        info: _NodeInfo = _NodeInfo(obj, node_key, self.config,
-                                    nodes_searched, ancestors_ids)
-        ancestors_ids.add(id(obj))
-        nodes_searched += len(info.branches)
-
-        maxed_depth: bool = bool(depth >= self.config.max_depth
-                                 and info.branches) or info.maxed_depth
-        has_maxed_depth: bool = maxed_depth
-
-        branches: list[Subtree] = []
-        max_branches: float = 0
-        if not maxed_depth:
-            for branch_key, branch_var in info.branches.items():
-                branch: Subtree = Subtree(
-                    branch_var, branch_key, max_lines, self.config,
-                    nodes_searched, ancestors_ids.copy(), depth + 1
-                )
-                # noinspection PyProtectedMember
-                has_maxed_depth = has_maxed_depth or branch._has_maxed_depth
-                # noinspection PyProtectedMember
-                nodes_searched = branch._nodes_searched
-                branches.append(branch)
-            self.all_branches = tuple(branches)
-            self.group_branches()
-            # noinspection PyTypeChecker
-            max_branches = min(len(self.all_branches),
-                               self.config.max_branches)
-
+    def __init__(self, base_cls: tuple, cls: Type['Subtree'],
+                 info_tree: _InfoTree):
+        self.config: Config = info_tree.config
+        info: _NodeInfo = info_tree.node_info
+        node_key: _NodeKey = info.key
+        self.all_branches: tuple[Subtree, ...] = tuple(
+            Subtree(sub_info_tree) for sub_info_tree in info_tree.branches
+        )
+        self.group_branches()
+        max_branches: int = int(min(float(len(self.all_branches)),
+                                    self.config.max_branches))
         overflowed: bool = info.maxed_search or (len(self.all_branches)
                                                  > self.config.max_branches)
-
         self.subtree: Subtree = base_cls.__new__(
             cls, self.all_branches[:max_branches]
         )
         self.subtree._key = node_key
-        self.subtree._config = config
+        self.subtree._config = self.config
         self.subtree._info = info
-        self.subtree._nodes_searched = nodes_searched
         self.subtree._node_text = str(info)
         self.subtree._overflowed = overflowed
-        self.subtree._maxed_depth = maxed_depth
-        self.subtree._has_maxed_depth = has_maxed_depth
-        self.subtree._max_lines = max_lines
+        self.subtree._maxed_depth = info.maxed_depth
 
     @staticmethod
     def group_to_map(v: list[set[int]]) -> dict[tuple[int, int], int]:
@@ -549,14 +573,8 @@ class _SubtreeCreator:
 class Subtree(tuple):
     """A recursive object tree structure"""
 
-    def __new__(cls, obj: Any, node_key: _NodeKey,
-                max_lines: float, config: Config,
-                nodes_searched: int, ancestors_ids: set, depth: int):
-        creator: _SubtreeCreator = _SubtreeCreator(
-            super(), cls, obj, node_key,
-            max_lines, config, nodes_searched, ancestors_ids, depth
-        )
-        return creator.subtree
+    def __new__(cls, info_tree: _InfoTree):
+        return _SubtreeCreator(super(), cls, info_tree).subtree
 
     # noinspection PyUnresolvedReferences
     def __init__(self, *_args, **_kwargs):
@@ -564,12 +582,9 @@ class Subtree(tuple):
         self._key: _NodeKey = self._key
         self._config: Config = self._config
         self._info: _NodeInfo = self._info
-        self._nodes_searched: int = self._nodes_searched
         self._node_text: str = self._node_text
         self._overflowed: bool = self._overflowed
         self._maxed_depth: bool = self._maxed_depth
-        self._has_maxed_depth: bool = self._has_maxed_depth
-        self._max_lines: float = self._max_lines
 
         self._update_paths()
         # Hash is unique if overflowed or max depth reached because
@@ -599,30 +614,12 @@ class Subtree(tuple):
         return self._key
 
     @property
-    def max_lines(self) -> float:
-        return self._max_lines
-
-    def _set_max_lines(self, max_lines: float):
-        self._max_lines = max_lines
-        for branch in self:
-            # noinspection PyProtectedMember
-            branch._set_max_lines(max_lines)
-
-    @property
-    def has_maxed_depth(self) -> bool:
-        return self._has_maxed_depth
-
-    @property
     def maxed_depth(self) -> bool:
         return self._maxed_depth
 
     @property
     def node_text(self) -> str:
         return self._node_text
-
-    @property
-    def nodes_searched(self) -> int:
-        return self._nodes_searched
 
     @property
     def overflowed(self) -> bool:
@@ -647,7 +644,8 @@ class Subtree(tuple):
         for branch in self:
             branch._update_paths(self._path)
 
-    def _get_tree_lines(self, root_pad: str = '',
+    def _get_tree_lines(self, max_lines: float,
+                        root_pad: str = '',
                         branch_pad: str = '') -> list[str]:
         lines: list[str] = [f'{root_pad}{self._node_text}']
         if self._maxed_depth and self._is_expandable:
@@ -662,6 +660,7 @@ class Subtree(tuple):
         for branch in branches:
             # noinspection PyProtectedMember
             lines.extend(branch._get_tree_lines(
+                max_lines=max_lines,
                 root_pad=f'{branch_pad}├── ',
                 branch_pad=f'{branch_pad}│   ',
             ))
@@ -670,20 +669,21 @@ class Subtree(tuple):
         else:
             # noinspection PyProtectedMember
             lines.extend(self[-1]._get_tree_lines(
+                max_lines=max_lines,
                 root_pad=f'{branch_pad}└── ',
                 branch_pad=f'{branch_pad}    ',
             ))
-        if len(lines) > self._max_lines:
-            del lines[self._max_lines - 1:]
+        if len(lines) > max_lines:
+            del lines[max_lines - 1:]
             lines.append(' ...')
         return lines
 
     # noinspection PyProtectedMember
-    def get_dict(self) -> str | dict[str, str | dict]:
+    def get_dict(self, max_lines: float) -> str | dict[str, str | dict]:
         if not self:  # empty
             return str(self._info)
         return {
-            str(branch._info): branch.get_dict()
+            str(branch._info): branch.get_dict(max_lines)
             for branch in self
         }
 
@@ -736,76 +736,73 @@ class Tree(Subtree):
     def __new__(cls, obj: Any, key_text: str | None = None,
                 max_lines: float = _DEFAULT_MAX_LINES,
                 config: Type[Config] = Config, **kwargs):
-        max_depth: float = _DEFAULT_MAX_DEPTH
-        try:
-            max_depth = kwargs.pop('max_depth')
-        except KeyError:
-            pass
-        depth: int = 1
-        if depth > max_depth:
-            raise ValueError('Argument max_depth must be at least 1')
-
-        kwargs['max_depth'] = depth
-        depth += 1
         # noinspection PyArgumentList
-        temp_config: Config = config(**kwargs)
-        temp_tree: Tree = super().__new__(
-            cls, obj, _NodeKey(_KeyType.NONE, key_text), max_lines,
-            temp_config, nodes_searched=0, ancestors_ids=set(), depth=0
+        config: Config = config(**kwargs)
+        info_tree: _InfoTree = _InfoTree(
+            obj, _NodeKey(_KeyType.NONE, key_text), config,
+            nodes_searched=0, ancestors_ids=set(), depth=0
         )
-        if not temp_tree._has_maxed_depth:
-            return temp_tree
+        while not info_tree.is_complete:
+            info_tree.update()
+        tree: Tree = super().__new__(cls, info_tree)
+        tree._nodes_searched = info_tree.nodes_searched
+        tree.max_lines = max_lines
+        return tree
 
-        # max_depth can be infinity, so a for loop does not work
-        while depth <= max_depth:
-            kwargs['max_depth'] = depth
-            depth += 1
-            # noinspection PyArgumentList
-            temp_config = config(**kwargs)
-            temp_tree: Tree = super().__new__(
-                cls, obj, _NodeKey(_KeyType.NONE, key_text), max_lines,
-                temp_config, nodes_searched=0, ancestors_ids=set(), depth=0
-            )
-            if not temp_tree._has_maxed_depth:
-                return temp_tree
+    # noinspection PyUnresolvedReferences
+    def __init__(self, *args, **kwargs):
+        # Prevent propagation of warnings
+        self._nodes_searched: int = self._nodes_searched
+        self.max_lines: float = self.max_lines
 
-        return temp_tree
+        super().__init__(*args, **kwargs)
 
     @property
-    def max_lines(self) -> float:
-        return self._max_lines
+    def nodes_searched(self) -> int:
+        return self._nodes_searched
 
-    @max_lines.setter
-    def max_lines(self, max_lines: float):
-        self._set_max_lines(max_lines)
+    def get_dict(self, max_lines: float | None = None
+                 ) -> str | dict[str, str | dict]:
+        if max_lines is not None:
+            self.max_lines = max_lines
+        return super().get_dict(max_lines)
 
-    def json(self, *args, **kwargs) -> str:
-        return json.dumps(self.get_dict(), *args, **kwargs)
+    def json(self, *args, max_lines: float | None = None, **kwargs) -> str:
+        if max_lines is not None:
+            self.max_lines = max_lines
+        return json.dumps(self.get_dict(max_lines), *args, **kwargs)
 
     def save_json(self, filename, *args,
-                  encoding='utf-8',
-                  ensure_ascii=False,
-                  indent=4,
+                  max_lines: float | None = None,
+                  encoding: str = 'utf-8',
+                  ensure_ascii: bool = False,
+                  indent: int = 4,
                   **kwargs):
-
+        if max_lines is None:
+            max_lines = self.max_lines
         with open(filename, 'w', encoding=encoding) as file:
-            json.dump(self.get_dict(), file, *args,
+            json.dump(self.get_dict(max_lines), file, *args,
                       ensure_ascii=ensure_ascii,
                       indent=indent,
                       **kwargs)
 
-    def get_tree_str(self) -> str:
-        return '\n'.join(self._get_tree_lines(' ', ' '))
+    def get_tree_str(self, max_lines: float | None = None) -> str:
+        if max_lines is None:
+            max_lines = self.max_lines
+        return '\n'.join(self._get_tree_lines(max_lines, ' ', ' '))
 
-    def print(self):
+    def print(self, max_lines: float | None = None):
         """Print a tree view of the object's type structure"""
-        print(self.get_tree_str())
+        print(self.get_tree_str(max_lines))
 
-    def view(self, spawn_thread: bool = True, spawn_process: bool = False):
+    def view(self, spawn_thread: bool = True, spawn_process: bool = False,
+             max_lines: float | None = None):
         """Show a tree view of the object's type structure in an
         interactive Tkinter window.
         """
-        tree_viewer(self,
+        if max_lines is None:
+            max_lines = self.max_lines
+        tree_viewer(self, max_lines,
                     spawn_thread=spawn_thread,
                     spawn_process=spawn_process)
 
@@ -828,11 +825,10 @@ def view_tree(obj: Any, *,
 
 if __name__ == '__main__':
     d1 = [{'a', 'b', 1, 2, (3, 4), (5, 6), 'c', .1}, {'a': 0, 'b': ...}]
-    print_tree(d1, show_lengths=False)
+    print_tree(d1)
     print()
 
-    obj1 = Tree(0)
-    print_tree(obj1, include_dir=True, max_depth=3, max_lines=15)
+    print_tree((0,), include_dir=True, max_depth=2, max_lines=15)
     print()
 
     import urllib.request
@@ -844,13 +840,14 @@ if __name__ == '__main__':
     tree1 = xml.etree.ElementTree.fromstring(text1)
     print_tree(tree1, config=Format.XML)
     print()
-
+    
     import xml.dom.minidom
     dom1 = xml.dom.minidom.parseString(text1)
-    print_tree(dom1, config=Format.DOM, max_search=18)
+    print_tree(dom1, config=Format.DOM, max_lines=10)
     print()
 
-    print_tree((0,), include_dir=True, max_depth=2, max_lines=18)
+    obj1 = Tree(0)
+    print_tree(obj1, include_dir=True, max_depth=3, max_lines=15)
     print()
 
     url2 = 'https://archive.org/metadata/TheAdventuresOfTomSawyer_201303'

@@ -672,16 +672,17 @@ class ViewTreeWindow(tk.Tk):
 class PicklableTree(tuple):
     """Transform Tree into a simpler pickable object"""
 
-    def __new__(cls, tree):
-        return super().__new__(cls, map(PicklableTree, tree))
-
-    def __init__(self, tree):
-        self.node_str: str = tree.node_text
-        self.path: str = tree.path
-        self.is_expandable: bool = tree.is_expandable
-        self.overflowed: bool = tree.overflowed
-        self.maxed_depth: bool = tree.maxed_depth
-        self.max_lines: float = tree.max_lines
+    def __new__(cls, tree, max_lines: float):
+        self = super().__new__(cls, (
+            PicklableTree(subtree, max_lines) for subtree in tree
+        ))
+        self.max_lines = max_lines
+        self.node_str = tree.node_text
+        self.path = tree.path
+        self.is_expandable = tree.is_expandable
+        self.overflowed = tree.overflowed
+        self.maxed_depth = tree.maxed_depth
+        return self
 
 
 def tree_window_loop(tree: PicklableTree):
@@ -699,11 +700,12 @@ def tree_window_loop(tree: PicklableTree):
     window.mainloop()
 
 
-def tree_viewer(tree, *, spawn_thread=True, spawn_process=False):
+def tree_viewer(tree, max_lines: float, *,
+                spawn_thread=True, spawn_process=False):
     """GUI spawner. Convert Tree to a simpler pickable object and
     optionally spawn a new thread or process.
     """
-    tree = PicklableTree(tree)
+    tree = PicklableTree(tree, max_lines)
     if spawn_process:
         multiprocessing.Process(target=tree_window_loop,
                                 args=(tree,)).start()
