@@ -87,20 +87,20 @@ likely freeze.
 
 ::
 
- <tuple>[1]
- ├── .count: <builtin_function_or_method>
- ├── .index: <builtin_function_or_method>
- └── [0]: <int>
-     ├── .as_integer_ratio: <builtin_function_or_method>
-     ├── .bit_count: <builtin_function_or_method>
-     ├── .bit_length: <builtin_function_or_method>
-     ├── .conjugate: <builtin_function_or_method>
-     ├── .denominator: <int>
-     │   └── ...
-     ├── .from_bytes: <builtin_function_or_method>
-     ├── .imag: <...> <int>
-     │   └── ...
-     ├── .numerator: <...> <int>
+ <Tree>[0]
+ ├── .config: <Template>
+ │   ├── .include_attributes: <bool>
+ │   │   ├── .as_integer_ratio: <builtin_function_or_method>
+ │   │   ├── .bit_count: <builtin_function_or_method>
+ │   │   ├── .bit_length: <builtin_function_or_method>
+ │   │   ├── .conjugate: <builtin_function_or_method>
+ │   │   ├── .denominator: <int>
+ │   │   │   └── ...
+ │   │   ├── .from_bytes: <builtin_function_or_method>
+ │   │   ├── .imag: <int>
+ │   │   │   └── ...
+ │   │   ├── .numerator: <int>
+ │   │   │   └── ...
  ...
 
 Note that the last two items have a special tag :code:`<...>` which means it
@@ -176,7 +176,7 @@ Alternatively, you can use configuration templates:
 
 .. code-block:: python
 
-    typetree.print_tree(dom, config=typetree.Format.DOM, max_lines=10)
+    typetree.print_tree(dom, template=typetree.DOM, max_lines=10)
 
 Which gives the same output.
 
@@ -236,7 +236,7 @@ Parameters
 - :python:`include_attributes`: Flag for including the mutable attributes
   returned by :python:`vars`.
 - :python:`include_dir`: Flag for including the attributes returned by
-  :python:`dir`, except the protected (:python:`_protected`) and special
+  :python:`dir`, except the protected (:python:`_protected`) and the special
   (:python:`__special__`) ones.
 - :python:`include_protected`: Flag for including the protected
   (:python:`_protected`) attributes.
@@ -246,23 +246,20 @@ Parameters
   it is the maximum number of rows to be displayed, not including the extra
   ellipsis at the end. Can be disabled by setting it to infinity
   (:python:`float('inf')` or :python:`math.inf`).
-- :python:`max_search`: Maximum number of nodes searched. Can be disabled
-  by setting it to infinity (not recommended).
-- :python:`max_depth`: Maximum display depth. Beware that the true search
-  depth is one higher than specified. Can be disabled by setting it to
-  infinity.
+- :python:`max_search`: Maximum number of nodes searched..
+- :python:`max_depth`: Maximum search depth.
 - :python:`max_branches`: Maximum number of branches displayed on each
-  node This only applies after grouping. Can be disabled by setting it to
-  infinity.
+  node. This only applies after grouping.
 
-Additionally, there is a helper class :python:`Format` which contains
-configuration templates for common object types. Currently, the templates are:
+Additionally, there are also helper classes of configuration templates for
+common object types. Currently, the templates are:
 
-- :python:`Format.DOM`
-- :python:`Format.HTML`
-- :python:`Format.XML`
+- :python:`Template` (default)
+- :python:`DOM`
+- :python:`HTML`
+- :python:`XML`
 
-These templates can be passed to the parameter :python:`config`.
+These templates can be passed to the parameter :python:`template`.
 
 **GUI**
 

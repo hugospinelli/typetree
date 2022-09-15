@@ -19,7 +19,7 @@ try:
     # the initialization of a new ViewTreeWindow object.
     from ctypes import windll
 except ImportError:
-    windll = None  # Not required
+    windll: None = None  # Not required
 
 _PYPERCLIP_LOADED: bool = True
 try:
@@ -220,7 +220,7 @@ class TreeNode:
         """Draw the key and the value type of the node"""
         text_x = self.x
         text_y = self.y
-        text = self.tree.node_str or ''
+        text = self.tree.node_text or ''
         if self.label is None:
             self.label = tk.Label(self.canvas, text=text, bd=0,
                                   padx=self.text_pad, pady=self.text_pad,
@@ -672,12 +672,19 @@ class ViewTreeWindow(tk.Tk):
 class PicklableTree(tuple):
     """Transform Tree into a simpler pickable object"""
 
+    max_lines: float
+    node_text: str
+    path: str
+    is_expandable: bool
+    overflowed: bool
+    maxed_depth: bool
+
     def __new__(cls, tree, max_lines: float):
         self = super().__new__(cls, (
             PicklableTree(subtree, max_lines) for subtree in tree
         ))
         self.max_lines = max_lines
-        self.node_str = tree.node_text
+        self.node_text = tree.node_text
         self.path = tree.path
         self.is_expandable = tree.is_expandable
         self.overflowed = tree.overflowed
