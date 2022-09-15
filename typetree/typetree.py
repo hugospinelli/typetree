@@ -548,6 +548,7 @@ class Subtree(tuple):
     _overflowed: bool
     _maxed_depth: bool
     # Initialized by __init__
+    _nodes: int
     _hash: int
     _path: str
     _is_expandable: bool
@@ -557,6 +558,8 @@ class Subtree(tuple):
 
     def __init__(self, *_args, **_kwargs):
         self._update_paths()
+        node: Subtree
+        self._nodes = len(self) + sum(node._nodes for node in self)
         # Hash is unique if overflowed or max depth reached because
         # the tree is incomplete and equality between incomplete trees
         # cannot be established.
@@ -570,6 +573,10 @@ class Subtree(tuple):
         self._update_paths()
         self._is_expandable = bool(self or self._overflowed
                                    or self._maxed_depth)
+
+    @property
+    def nodes(self) -> int:
+        return self._nodes
 
     @property
     def config(self) -> Template:
@@ -699,7 +706,8 @@ class Subtree(tuple):
 
 
 class Tree(Subtree):
-    _nodes_searched: int
+    _depth: int
+    _searches: int
     max_lines: float
 
     def __new__(cls, obj: Any, *, key_text: str | None = None,
@@ -711,10 +719,13 @@ class Tree(Subtree):
             obj, _NodeKey(_KeyType.NONE, key_text), config,
             nodes_searched=0, ancestors_ids=set(), depth=0
         )
+        depth: int = 0
         while not info_tree.is_complete:
             info_tree.update()
+            depth += 1
         tree: Tree = super().__new__(cls, info_tree)
-        tree._nodes_searched = info_tree.nodes_searched
+        tree._depth = depth
+        tree._searches = info_tree.nodes_searched
         tree.max_lines = max_lines
         return tree
 
@@ -780,8 +791,12 @@ class Tree(Subtree):
         super().__init__(obj, **kwargs)
 
     @property
-    def nodes_searched(self) -> int:
-        return self._nodes_searched
+    def depth(self) -> int:
+        return self._depth
+
+    @property
+    def searches(self) -> int:
+        return self._searches
 
     def to_dict(self, max_lines: float | None = None
                 ) -> str | dict[str, str | dict]:
@@ -794,7 +809,7 @@ class Tree(Subtree):
             max_lines = self.max_lines
         return json.dumps(self.to_dict(max_lines), *args, **kwargs)
 
-    def save_as_json(self, filename, *args,
+    def save_as_json(self, file_path: str, *args,
                      max_lines: float | None = None,
                      encoding: str = 'utf-8',
                      ensure_ascii: bool = False,
@@ -802,31 +817,50 @@ class Tree(Subtree):
                      **kwargs):
         if max_lines is None:
             max_lines = self.max_lines
-        with open(filename, 'w', encoding=encoding) as file:
+        with open(file_path, 'w', encoding=encoding) as file:
             json.dump(self.to_dict(max_lines), file, *args,
                       ensure_ascii=ensure_ascii,
                       indent=indent,
                       **kwargs)
 
-    def to_string(self, max_lines: float | None = None) -> str:
+    def save_as_text(self, file_path: str, encoding: str = 'utf-8', **kwargs):
+        with open(file_path, 'w', encoding=encoding) as f:
+            f.write(self.to_string(**kwargs))
+
+    def to_string(self, max_lines: float | None = None,
+                  verbose: bool = False) -> str:
         """Get a tree view of the object's type structure as a string.
 
             Arguments:
                 :param max_lines: Maximum number of lines to be printed.
                     Can be disabled by setting it to infinity
+                :type max_lines: float, optional
+                :param verbose: Flag for printing extra information
+                    before printing the tree view. Defaults to False
+                :type verbose: bool, optional
         """
+        lines: list[str] = []
+        if verbose:
+            lines.append('Nodes (indexed/searched): '
+                         f'{self.nodes}/{self.searches}')
+            lines.append(f'Maximum depth: {self.depth}')
         if max_lines is None:
             max_lines = self.max_lines
-        return '\n'.join(self._get_tree_lines(max_lines, ' ', ' '))
+        lines.extend(self._get_tree_lines(max_lines, ' ', ' '))
+        return '\n'.join(lines)
 
-    def print(self, max_lines: float | None = None):
+    def print(self, max_lines: float | None = None, verbose: bool = False):
         """Print a tree view of the object's type structure.
 
             Arguments:
                 :param max_lines: Maximum number of lines to be printed.
                     Can be disabled by setting it to infinity
+                :type max_lines: float, optional
+                :param verbose: Flag for printing extra information
+                    before printing the tree view. Defaults to False
+                :type verbose: bool, optional
         """
-        print(self.to_string(max_lines))
+        print(self.to_string(max_lines=max_lines, verbose=verbose))
 
     def view(self, spawn_thread: bool = True, spawn_process: bool = False,
              max_lines: float | None = None):
@@ -849,16 +883,23 @@ class Tree(Subtree):
                     spawn_process=spawn_process)
 
 
-def print_tree(obj: Any, **kwargs):
+def print_tree(obj: Any, *, max_lines: float | None = None,
+               verbose: bool = False, **kwargs):
     """Print a tree view of the object's type structure
 
         Arguments:
             :param obj: Any Python object to be analysed
             :type obj: Any
-            :param kwargs: Same as :class:`Tree`. Type `help(Tree.__init__)`
-                for the full list
+            :param max_lines: Maximum number of lines to be printed. Can
+                be disabled by setting it to infinity
+            :type max_lines: float, optional
+            :param verbose: Flag for printing extra information before
+                printing the tree view. Defaults to False
+            :type verbose: bool, optional
+            :param kwargs: Same as :class:`Tree`. Type
+                `help(Tree.__init__)` for the full list
     """
-    Tree(obj, **kwargs).print()
+    Tree(obj, **kwargs).print(max_lines=max_lines, verbose=verbose)
 
 
 def view_tree(obj: Any, *,
