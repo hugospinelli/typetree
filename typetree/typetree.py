@@ -34,27 +34,27 @@ _RANGE_REGEX = re.compile(r'^\[(\d+)(?::(\d+))?]$')
 
 
 @functools.total_ordering
-class _KeyType(enum.Enum):
+class KeyType(enum.Enum):
     """Node key types. When printed, each type will display
     the key differently based on their type.
     """
     # For the root node, which has no key
-    NONE = 0
+    NONE = 'None'
     # For object attributes (starts with a dot)
     # Example: .attr
-    ATTR = 1
+    ATTR = 'Attribute'
     # For Mapping keys
     # Examples: ['key'], [datetime.date(1970, 1, 1)]
-    MAP = 2
+    MAP = 'Mapping'
     # For Sequence indices or slices
     # Examples: [2], [4:7], [:3], [:]
-    INDEX = 3
+    INDEX = 'Sequence'
     # For Collection, which has no key, but has an item counter
     # Example: (×3)
-    SET = 4
+    SET = 'Collection'
 
     @classmethod
-    def path(cls, key_type: '_KeyType', value: Any = None) -> str:
+    def path(cls, key_type: 'KeyType', value: Any = None) -> str:
         match key_type, value:
             case cls.NONE, None:
                 return ''
@@ -79,7 +79,7 @@ class _KeyType(enum.Enum):
         raise TypeError(f"Invalid key type '{key_type}' or value '{value}'")
 
     @classmethod
-    def str(cls, key_type: '_KeyType', value: Any = None) -> str:
+    def str(cls, key_type: 'KeyType', value: Any = None) -> str:
         match key_type, value:
             case cls.NONE, None:
                 return ''
@@ -88,7 +88,7 @@ class _KeyType(enum.Enum):
             case _:
                 return f'{cls.path(key_type, value)}: '
 
-    def __lt__(self, other: '_KeyType'):
+    def __lt__(self, other: 'KeyType'):
         if not isinstance(other, type(self)):
             return TypeError
         return self.value < other.value
@@ -98,16 +98,16 @@ class _KeyType(enum.Enum):
 class _NodeKey:
     """Node key for string representation and for sorting"""
 
-    def __init__(self, key_type: _KeyType, value: Any = None):
-        self._str: str = _KeyType.str(key_type, value)
-        self._path: str = _KeyType.path(key_type, value)
-        self._type: _KeyType = key_type
+    def __init__(self, key_type: KeyType, value: Any = None):
+        self._str: str = KeyType.str(key_type, value)
+        self._path: str = KeyType.path(key_type, value)
+        self._type: KeyType = key_type
         self._counter: int = 1
-        if key_type == _KeyType.SET:
+        if key_type == KeyType.SET:
             assert isinstance(value, int)
             self._counter = value
         self._slice: tuple[int, int] | None = None
-        if key_type == _KeyType.INDEX:
+        if key_type == KeyType.INDEX:
             if isinstance(value, int):
                 self._slice = value, value + 1
             else:
@@ -117,7 +117,7 @@ class _NodeKey:
             type(self),
             self._type,
             self._slice,
-            id(self)*(self._type == _KeyType.SET)
+            id(self)*(self._type == KeyType.SET)
         ))
 
     @property
@@ -125,7 +125,7 @@ class _NodeKey:
         return self._path
 
     @property
-    def type(self) -> _KeyType:
+    def type(self) -> KeyType:
         return self._type
 
     @property
@@ -138,11 +138,11 @@ class _NodeKey:
 
     def reset_counter(self):
         self._counter = 1
-        self._str = _KeyType.str(self.type, self._counter)
+        self._str = KeyType.str(self.type, self._counter)
 
     def increment_counter(self):
         self._counter += 1
-        self._str = _KeyType.str(self.type, self._counter)
+        self._str = KeyType.str(self.type, self._counter)
 
     def __str__(self) -> str:
         return self._str
@@ -153,7 +153,7 @@ class _NodeKey:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, type(self)):
             raise NotImplementedError
-        if self._type == other._type == _KeyType.SET:
+        if self._type == other._type == KeyType.SET:
             return False
         return self._str == other._str
 
@@ -167,7 +167,7 @@ class _NodeKey:
                 return self._type < other._type
             return self._slice < other._slice
         if self._type == other._type:
-            if self._type == _KeyType.SET:
+            if self._type == KeyType.SET:
                 return self._hash < other._hash
             return self._str < other._str
         return self._type < other._type
@@ -176,13 +176,27 @@ class _NodeKey:
         return self._hash
 
 
+def get_itself(var: Any) -> Any:
+    return var
+
+
+def get_type_name(var: Any) -> str:
+    return str(type(var).__name__)
+
+
+def getattr_maker(attr: str) -> Callable[[Any], Any]:
+    def attr_get(var: Any, attr_copy: str = attr) -> Any:
+        return getattr(var, attr_copy)
+    return attr_get
+
+
 @dataclasses.dataclass(slots=True, frozen=True)
 class Template:
     """Default template class for configuration properties of a new Tree"""
 
-    items_lookup: Callable[[Any], Any] = lambda var: var
-    type_name_lookup: Callable[[Any], str] = lambda var: type(var).__name__
-    value_lookup: Callable[[Any], Any] = lambda var: var
+    items_lookup: Callable[[Any], Any] = get_itself
+    type_name_lookup: Callable[[Any], str] = get_type_name
+    value_lookup: Callable[[Any], Any] = get_itself
     sort_keys: bool = True
     show_lengths: bool = True
     include_attributes: bool = True
@@ -196,21 +210,21 @@ class Template:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class DOM(Template):
-    items_lookup: Callable[[Any], Any] = lambda x: x.childNodes
-    type_name_lookup: Callable[[Any], str] = lambda x: x.nodeName
-    value_lookup: Callable[[Any], Any] = lambda x: x.text
+    items_lookup: Callable[[Any], Any] = getattr_maker('childNodes')
+    type_name_lookup: Callable[[Any], str] = getattr_maker('nodeName')
+    value_lookup: Callable[[Any], Any] = getattr_maker('text')
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class HTML(Template):
-    type_name_lookup: Callable[[Any], str] = lambda x: x.tag
-    value_lookup: Callable[[Any], Any] = lambda x: x.text
+    type_name_lookup: Callable[[Any], str] = getattr_maker('tag')
+    value_lookup: Callable[[Any], Any] = getattr_maker('text')
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class XML(Template):
-    type_name_lookup: Callable[[Any], str] = lambda x: x.tag
-    value_lookup: Callable[[Any], Any] = lambda x: x.text
+    type_name_lookup: Callable[[Any], str] = getattr_maker('tag')
+    value_lookup: Callable[[Any], Any] = getattr_maker('text')
 
 
 class _MaxSearchError(Exception):
@@ -244,7 +258,7 @@ class _NodeInfo:
         obj = self.config.items_lookup(obj)
 
         # These refer to the contents of Maps or Sequences
-        self.items_key_type: _KeyType = _KeyType.NONE
+        self.items_key_type: KeyType = KeyType.NONE
         self.items_len: int | None = None
         self.get_items_info(obj, original_var)
 
@@ -291,7 +305,7 @@ class _NodeInfo:
             assert size == len(var.keys()) == len(var.items())
             assert all(key1 == key2 for key1, key2 in zip(var, var.keys()))
             assert all(var[key] == value for key, value in var.items())
-            self.items_key_type = _KeyType.MAP
+            self.items_key_type = KeyType.MAP
             self.items_len = size
             return
         except (AttributeError, TypeError, KeyError, AssertionError):
@@ -305,10 +319,10 @@ class _NodeInfo:
                 return
             except StopIteration:
                 pass
-            self.items_key_type = _KeyType.SET
+            self.items_key_type = KeyType.SET
             self.items_len = size
             return
-        self.items_key_type = _KeyType.INDEX
+        self.items_key_type = KeyType.INDEX
         self.items_len = size
         return
 
@@ -316,7 +330,7 @@ class _NodeInfo:
         if self.config.include_attributes and hasattr(var, '__dict__'):
             for key, value in vars(var).items():
                 if self.include_attr(key):
-                    self.add_branch(_KeyType.ATTR, key, value)
+                    self.add_branch(KeyType.ATTR, key, value)
         if self.config.include_dir:
             for key in dir(var):
                 if self.include_attr(key):
@@ -324,21 +338,21 @@ class _NodeInfo:
                         value = getattr(var, key)
                     except AttributeError:
                         continue
-                    self.add_branch(_KeyType.ATTR, key, value)
+                    self.add_branch(KeyType.ATTR, key, value)
         match self.items_key_type:
-            case _KeyType.MAP:
+            case KeyType.MAP:
                 for key, value in var.items():
-                    self.add_branch(_KeyType.MAP, key, value)
-            case _KeyType.INDEX:
+                    self.add_branch(KeyType.MAP, key, value)
+            case KeyType.INDEX:
                 for index, value in enumerate(var):
-                    self.add_branch(_KeyType.INDEX, index, value)
-            case _KeyType.SET:
+                    self.add_branch(KeyType.INDEX, index, value)
+            case KeyType.SET:
                 for value in var:
-                    self.add_branch(_KeyType.SET, 1, value)
+                    self.add_branch(KeyType.SET, 1, value)
         # Success -- do not display ellipsis indicating max depth exceeded
         self.maxed_depth = False
 
-    def add_branch(self, key_type: _KeyType, key: Any, value: Any):
+    def add_branch(self, key_type: KeyType, key: Any, value: Any):
         if self.nodes_searched >= self.config.max_search:
             self.maxed_search = True
             if not self.branches:  # empty
@@ -436,10 +450,10 @@ class _SubtreeCreator:
         self.subtree: Subtree = tuple.__new__(
             cls, self.all_branches[:max_branches]
         )
-        self.subtree._key = node_key
+        self.subtree._node_key = node_key
         self.subtree._config = self.config
         self.subtree._info = info
-        self.subtree._node_text = str(info)
+        self.subtree._label = str(info)
         self.subtree._overflowed = overflowed
         self.subtree._maxed_depth = info.maxed_depth
 
@@ -489,8 +503,8 @@ class _SubtreeCreator:
         unique_set_branches: list[Subtree] = []
         added_branches: list[Subtree] = []
         for branch in self.all_branches:
-            if branch._key.type == _KeyType.INDEX:
-                range_key = range(*branch._key.slice)
+            if branch._node_key.type == KeyType.INDEX:
+                range_key = range(*branch._node_key.slice)
                 try:
                     index = unique_index_branches.index(branch)
                 except ValueError:
@@ -500,14 +514,14 @@ class _SubtreeCreator:
                 else:
                     all_index_branches[index].append(branch)
                     index_keys[index].update(range_key)
-            elif branch._key.type == _KeyType.SET:
+            elif branch._node_key.type == KeyType.SET:
                 try:
                     index = unique_set_branches.index(branch)
                 except ValueError:
-                    branch._key.reset_counter()
+                    branch._node_key.reset_counter()
                     unique_set_branches.append(branch)
                 else:
-                    unique_set_branches[index]._key.increment_counter()
+                    unique_set_branches[index]._node_key.increment_counter()
             else:
                 added_branches.append(branch)
 
@@ -515,15 +529,15 @@ class _SubtreeCreator:
         for _range, index in self.group_to_map(index_keys).items():
             branch = all_index_branches[index].pop()
             if self.config.show_lengths:
-                branch._update_key(_NodeKey(_KeyType.INDEX, _range))
+                branch._update_key(_NodeKey(KeyType.INDEX, _range))
             else:
-                branch._update_key(_NodeKey(_KeyType.INDEX, None))
+                branch._update_key(_NodeKey(KeyType.INDEX, None))
             unique_index_branches.append(branch)
         unique_index_branches = list(sorted(unique_index_branches,
                                             key=lambda x: x.key))
 
         for branch in unique_set_branches:
-            branch._update_key(branch._key)
+            branch._update_key(branch._node_key)
 
         self.all_branches = tuple(added_branches
                                   + unique_index_branches
@@ -541,10 +555,10 @@ class Subtree(tuple):
     """A recursive object tree structure"""
 
     # Initialized by _SubtreeCreator
-    _key: _NodeKey
+    _node_key: _NodeKey
     _config: Template
     _info: _NodeInfo
-    _node_text: str
+    _label: str
     _overflowed: bool
     _maxed_depth: bool
     # Initialized by __init__
@@ -569,61 +583,88 @@ class Subtree(tuple):
             id(self)*(self._overflowed or self._maxed_depth),
             tuple(map(hash, self)),
         ))
-        self._path = self._key.path
+        self._path = self._node_key.path
         self._update_paths()
         self._is_expandable = bool(self or self._overflowed
                                    or self._maxed_depth)
 
     @property
+    def key(self) -> str:
+        """Path key from previous node to the current one"""
+        return self._node_key.path
+
+    @property
+    def key_type(self) -> KeyType:
+        """Return the key type used. Can be a Sequence index, a Mapping
+        key, an attribute, a Set (empty key), or none (also empty).
+        """
+        return self._node_key.type
+
+    @property
+    def path(self) -> str:
+        """Key path from the root node to the current one"""
+        return self._path
+
+    @property
+    def type(self) -> str:
+        """Type name of the objects the node corresponds to"""
+        return self._info.type_name
+
+    @property
+    def label(self) -> str:
+        """The full text displayed for the node"""
+        return self._label
+
+    @property
     def nodes(self) -> int:
+        """Number of inner nodes indexed"""
         return self._nodes
 
     @property
     def config(self) -> Template:
+        """Return the settings used for generating the tree"""
         return self._config
 
     @property
     def is_expandable(self) -> bool:
+        """Flag for whether the node refers to an object with possible
+        inner content. If true, the node will show as expandable in the
+        tree view.
+        """
         return self._is_expandable
 
     @property
-    def key(self) -> _NodeKey:
-        return self._key
-
-    @property
     def maxed_depth(self) -> bool:
+        """Flag for indicating if the node has reached the maximum depth
+        allowed and still has more content.
+        """
         return self._maxed_depth
 
     @property
-    def node_text(self) -> str:
-        return self._node_text
-
-    @property
     def overflowed(self) -> bool:
+        """Flag for indicating if the node has more branches than
+        indexed. Might be from reaching max_search or max_branches.
+        """
         return self._overflowed
 
-    @property
-    def path(self) -> str:
-        return self._path
-
     def _update_key(self, new_key: _NodeKey):
-        self._key = new_key
+        self._node_key = new_key
         self._info.key = new_key
-        self._node_text = str(self._info)
+        self._label = str(self._info)
         self._update_paths()
 
     def _update_paths(self, parent_path: str = ''):
-        if self._key.type == _KeyType.SET:
+        if self._node_key.type == KeyType.SET:
             self._path = f'{parent_path}.copy().pop()'
         else:
-            self._path = f'{parent_path}{self._key.path}'
+            self._path = f'{parent_path}{self._node_key.path}'
         for branch in self:  # type: Subtree
             branch._update_paths(self._path)
 
     def _get_tree_lines(self, max_lines: float,
                         root_pad: str = '',
                         branch_pad: str = '') -> list[str]:
-        lines: list[str] = [f'{root_pad}{self._node_text}']
+        lines: list[str] = [f'{root_pad}{self._label}']
         if self._maxed_depth and self._is_expandable:
             lines.append(f'{branch_pad}└── ...')
             return lines
@@ -716,7 +757,7 @@ class Tree(Subtree):
         # noinspection PyArgumentList
         config: Template = template(**kwargs)
         info_tree: _InfoTree = _InfoTree(
-            obj, _NodeKey(_KeyType.NONE, key_text), config,
+            obj, _NodeKey(KeyType.NONE, key_text), config,
             nodes_searched=0, ancestors_ids=set(), depth=0
         )
         depth: int = 0
@@ -792,10 +833,12 @@ class Tree(Subtree):
 
     @property
     def depth(self) -> int:
+        """Maximum depth reached"""
         return self._depth
 
     @property
     def searches(self) -> int:
+        """Total number of nodes searched"""
         return self._searches
 
     def to_dict(self, max_lines: float | None = None

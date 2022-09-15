@@ -220,7 +220,7 @@ class TreeNode:
         """Draw the key and the value type of the node"""
         text_x = self.x
         text_y = self.y
-        text = self.tree.node_text or ''
+        text = self.tree.label or ''
         if self.label is None:
             self.label = tk.Label(self.canvas, text=text, bd=0,
                                   padx=self.text_pad, pady=self.text_pad,
@@ -673,7 +673,7 @@ class PicklableTree(tuple):
     """Transform Tree into a simpler pickable object"""
 
     max_lines: float
-    node_text: str
+    label: str
     path: str
     is_expandable: bool
     overflowed: bool
@@ -684,7 +684,7 @@ class PicklableTree(tuple):
             PicklableTree(subtree, max_lines) for subtree in tree
         ))
         self.max_lines = max_lines
-        self.node_text = tree.node_text
+        self.label = tree.label
         self.path = tree.path
         self.is_expandable = tree.is_expandable
         self.overflowed = tree.overflowed

@@ -10,11 +10,12 @@ are grouped together when using `show_lengths=False`.
 of the type to represent infinite recursions.
 - [X] Make `Tree` an iterable with index access to child nodes.
 - [X] Helpers for XML, DOM, and HTML configurations.
-- [ ] Improve interface with the Tree stats.
-- [ ] Create save to file option.
-- [ ] Improve other input and output options for Tree.
+- [X] Improve interface with the Tree stats.
+- [X] Create save to file option.
+- [X] Improve other input and output options for Tree.
 
 ## PyCharm
 
-- [ ] Remove the `# noinspection PyUnresolvedReferences` in `Config`
+- [X] Remove the `# noinspection PyUnresolvedReferences` in `Config`
 class after the PyCharm bug is fixed (probably in version 2022.2.2).
+  - Not required anymore.
