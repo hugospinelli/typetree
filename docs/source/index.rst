@@ -15,6 +15,9 @@
 .. image:: https://img.shields.io/pypi/v/typetree
     :alt: PyPI-Server
     :target: https://pypi.org/project/typetree/
+.. image:: https://readthedocs.org/projects/typetree/badge/?version=stable
+    :target: https://typetree.readthedocs.io/en/stable/?badge=stable
+    :alt: Documentation Status
 
 .. toctree::
    :maxdepth: 2

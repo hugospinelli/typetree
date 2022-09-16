@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath("../../"))
 project = 'typetree'
 copyright = '2022, Hugo Spinelli'
 author = 'Hugo Spinelli'
-release = '0.1.3'
+release = '0.1.4'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

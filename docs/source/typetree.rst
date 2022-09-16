@@ -1,11 +1,7 @@
 typetree
 ========
 
-.. module:: typetree
-
 .. automodule:: typetree.typetree
-
-.. module:: typetree.typetree
 
 Main classes
 ------------

@@ -15,6 +15,9 @@
 .. image:: https://img.shields.io/pypi/v/typetree
     :alt: PyPI-Server
     :target: https://pypi.org/project/typetree/
+.. image:: https://readthedocs.org/projects/typetree/badge/?version=stable
+    :target: https://typetree.readthedocs.io/en/stable/?badge=stable
+    :alt: Documentation Status
 
 Generate a type tree view of a Python object's contents and attributes.
 The subtrees with the same type pattern are grouped together as a
