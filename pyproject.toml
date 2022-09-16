@@ -33,3 +33,18 @@ zip-safe = false
 
 [tool.setuptools.dynamic]
 version = {attr = "typetree.__version__"}
+
+[tool.pylama]
+format = "pylint"
+skip = "build/*,typetree/__init__.py,setup.py"
+linters = "eradicate,mccabe,mypy,pycodestyle,pydocstyle,pyflakes,pylint,isort"
+ignore = "E226"
+
+[tool.pylama.linter.pydocstyle]
+convention = "pep257"
+
+[tool.pylama.linter.mypy]
+ignore_missing_imports = true
+
+[tool.mypy]
+ignore_missing_imports = true

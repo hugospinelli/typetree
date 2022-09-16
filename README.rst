@@ -87,20 +87,20 @@ likely freeze.
 
 ::
 
- <Tree>[0]
- ├── .config: <Template>
- │   ├── .include_attributes: <bool>
- │   │   ├── .as_integer_ratio: <builtin_function_or_method>
- │   │   ├── .bit_count: <builtin_function_or_method>
- │   │   ├── .bit_length: <builtin_function_or_method>
- │   │   ├── .conjugate: <builtin_function_or_method>
- │   │   ├── .denominator: <int>
- │   │   │   └── ...
- │   │   ├── .from_bytes: <builtin_function_or_method>
- │   │   ├── .imag: <int>
- │   │   │   └── ...
- │   │   ├── .numerator: <int>
- │   │   │   └── ...
+ <tuple>[1]
+ ├── .count: <builtin_function_or_method>
+ ├── .index: <builtin_function_or_method>
+ └── [0]: <int>
+     ├── .as_integer_ratio: <builtin_function_or_method>
+     ├── .bit_count: <builtin_function_or_method>
+     ├── .bit_length: <builtin_function_or_method>
+     ├── .conjugate: <builtin_function_or_method>
+     ├── .denominator: <int>
+     │   └── ...
+     ├── .from_bytes: <builtin_function_or_method>
+     ├── .imag: <...> <int>
+     │   └── ...
+     ├── .numerator: <...> <int>
  ...
 
 Note that the last two items have a special tag :code:`<...>` which means it
@@ -232,7 +232,7 @@ Parameters
 - :python:`sort_keys`: Flag for sorting keys alphabetically.
 - :python:`show_lengths`: Flag for displaying lengths of iterables. This
   affects how subtrees are grouped together, since sequences with different
-  sizes but same content types will be considered equivalent.
+  sizes but same content types are considered equivalent.
 - :python:`include_attributes`: Flag for including the mutable attributes
   returned by :python:`vars`.
 - :python:`include_dir`: Flag for including the attributes returned by
@@ -246,7 +246,7 @@ Parameters
   it is the maximum number of rows to be displayed, not including the extra
   ellipsis at the end. Can be disabled by setting it to infinity
   (:python:`float('inf')` or :python:`math.inf`).
-- :python:`max_search`: Maximum number of nodes searched..
+- :python:`max_search`: Maximum number of nodes searched.
 - :python:`max_depth`: Maximum search depth.
 - :python:`max_branches`: Maximum number of branches displayed on each
   node. This only applies after grouping.

@@ -1,3 +1,5 @@
+"""Module for loading .ico files."""
+
 import os
 
 ICON_DIR = 'icons'
@@ -15,10 +17,13 @@ elif not os.path.isdir(ICON_DIR):
 
 
 class FileError(Exception):
+    """Exception class for file-related errors."""
+
     pass
 
 
 def fix_extension(file_path: str, ext: str) -> str:
+    """Fix missing extensions."""
     folder, file_name = os.path.split(file_path)
     if not file_name:
         raise FileError('File name is required')
@@ -29,10 +34,11 @@ def fix_extension(file_path: str, ext: str) -> str:
 
 
 def load_ico(file_name: str, size: float | None = None) -> bytes | list[bytes]:
-    """If no size is given, return all images in the ICO file.
-    Otherwise, return the image in the ICO file that closest match
-    the given size."""
+    """Load a .ico file.
 
+    If no size is given, return all images in the ICO file. Otherwise,
+    return the image in the ICO file that closest match the given size.
+    """
     ico_path = os.path.join(ICON_DIR, fix_extension(file_name, '.ico'))
     with open(ico_path, 'rb') as f:
         b = f.read()
