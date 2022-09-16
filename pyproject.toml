@@ -24,6 +24,7 @@ clipboard = ["pyperclip>=1.8.2"]
 [project.urls]
 "Source" = "https://github.com/hugospinelli/typetree"
 "Bug Tracker" = "https://github.com/hugospinelli/typetree/issues"
+"Documentation" = "https://typetree.readthedocs.io"
 
 [tool.setuptools]
 zip-safe = false
