@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Object type tree analyzer. The GUI is handled by a separate module.
 
-    - Use :class:`Tree` to generate the type tree as an object, which
-can be traversed as a subclass of a nested tuple.
-    - Use :func:`print_tree` to directly print the tree view.
-    - Use :func:`view_tree` to open the tree view as an interactive GUI.
+- Use :class:`Tree` to generate the type tree as an object, which can be
+  traversed as a subclass of a nested tuple.
+- Use :func:`print_tree` to directly print the tree view.
+- Use :func:`view_tree` to open the tree view as an interactive GUI.
 """
 
 import dataclasses
@@ -23,6 +23,7 @@ except (ModuleNotFoundError, ImportError):
 
 __all__ = [
     'Tree',
+    'Subtree',
     'print_tree',
     'view_tree',
     'Template',
@@ -132,7 +133,8 @@ class _NodeKey:
         self._type: KeyType = key_type
         self._counter: int = 1
         if key_type == KeyType.SET:
-            assert isinstance(value, int)
+            if not isinstance(value, int):
+                raise TypeError
             self._counter = value
         self._slice: tuple[int, int] | None = None
         if key_type == KeyType.INDEX:
@@ -220,7 +222,7 @@ def getattr_maker(attr: str) -> Callable[[Any], Any]:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Template:
-    """Default template for configuration properties of a new `Tree`."""
+    """Default template for configuration properties of :class:`Tree`."""
 
     items_lookup: Callable[[Any], Any] = get_itself
     type_name_lookup: Callable[[Any], str] = get_type_name
@@ -322,50 +324,28 @@ class _NodeInfo:
             return
 
         # Check for Mappings
-        try:
-            # Since Maps are usually also Sequences, the priority is
-            # to access the Map items. But if the keys do not match
-            # their Sequence values, the priority inverts.
-            assert size == len(var.keys()) == len(var.items())
-            assert all(key1 == key2 for key1, key2 in zip(var, var.keys()))
-            assert all(var[key] == value for key, value in var.items())
+        if self.is_mapping(var):
             self.items_key_type = KeyType.MAP
             self.items_len = size
             return
-        # Not a Mapping
-        except (AttributeError, TypeError, KeyError, AssertionError):
-            pass
 
         # Check for Sequences
-        try:
-            assert all(var[index] == value for index, value in enumerate(var))
+        if self.is_sequence(var):
             self.items_key_type = KeyType.INDEX
             self.items_len = size
             return
-        # Not a Sequence
-        except (KeyError, TypeError, AssertionError):
-            pass
 
         # Check for set-like Collections
-        try:
-            next(iter(var))
-        # Unknown type: has len, but is not an iterable. Ignore contents.
-        except (TypeError, KeyError):
-            return
-        # Is an empty Collection
-        except StopIteration:
-            pass
-        # Is a set-like Collection
-        self.items_key_type = KeyType.SET
-        self.items_len = size
-        return
+        if self.is_collection(var):
+            self.items_key_type = KeyType.SET
+            self.items_len = size
 
     def get_var_len(self, var: Any, original_var: Any) -> tuple[Any, int]:
         """Check for contents in `var`.
 
         If no content is found, use the value lookup for tree leaves.
         Return the value and the number of items it contains.
-        Raise TypeError if not a Collection.
+        Raise :exc:`TypeError` if not a Collection.
         """
         size: int = len(var)  # Raises TypeError if not a Collection
         if not size:
@@ -375,6 +355,41 @@ class _NodeInfo:
         if isinstance(var, str | bytes | bytearray):
             raise TypeError
         return var, size
+
+    @staticmethod
+    def is_mapping(var: Any) -> bool:
+        try:
+            # Since Maps are usually also Sequences, the priority is
+            # to access the Map items. But if the keys do not match
+            # their Sequence values, the priority inverts.
+            if (all(key1 == key2 for key1, key2 in zip(var, var.keys()))
+                    and all(var[key] == value for key, value in var.items())
+                    and len(var) == len(var.keys()) == len(var.items())):
+                return True
+        except (AttributeError, TypeError, KeyError):
+            pass
+        return False
+
+    @staticmethod
+    def is_sequence(var: Any) -> bool:
+        try:
+            if all(var[index] == value for index, value in enumerate(var)):
+                return True
+        except (KeyError, TypeError):
+            pass
+        return False
+
+    @staticmethod
+    def is_collection(var: Any) -> bool:
+        try:
+            next(iter(var))
+        # Unknown type: has len, but is not an iterable. Ignore contents.
+        except (TypeError, KeyError):
+            return False
+        # Is an empty Collection
+        except StopIteration:
+            pass
+        return True
 
     def add_branches(self, var: Any):
         if self.config.include_attributes and hasattr(var, '__dict__'):
@@ -430,7 +445,7 @@ class _NodeInfo:
 
 
 class _InfoTree:
-    """A recursive tree builder of _NodeInfo."""
+    """A recursive tree builder of :class:`_NodeInfo`."""
 
     def __init__(self, obj: Any, node_key: _NodeKey, config: Template,
                  nodes_searched: int, ancestors_ids: set[int], depth: int = 0):
@@ -451,7 +466,7 @@ class _InfoTree:
         self.updated: bool = False
 
     def update(self):
-        """Recursively call to update the deepest _InfoTree."""
+        """Recursively call to update the deepest :class:`_InfoTree`."""
         if self.is_complete:
             return
         elif self.updated:
@@ -484,7 +499,8 @@ class _SubtreeCreator:
 
     Used for pre-computing and analysing the branches.
     Needed because Subtree inherits from tuple, which is immutable, and
-    the creation process is too complex to be done inside `__new__`.
+    the creation process is too complex to be done inside
+    :meth:`_SubtreeCreator.__new__`.
     """
 
     def __init__(self, cls: Type['Subtree'], info_tree: _InfoTree):
@@ -633,9 +649,11 @@ class Subtree(tuple):
     _is_expandable: bool
 
     def __new__(cls, info_tree: _InfoTree):
+        """Create an immutable nested subtree."""
         return _SubtreeCreator(cls, info_tree).subtree
 
     def __init__(self, *_args, **_kwargs):
+        """Initialize the remaining subtree attributes."""
         self._update_paths()
         node: Subtree
         self._nodes = len(self) + sum(node._nodes for node in self)
@@ -766,6 +784,7 @@ class Subtree(tuple):
         return lines
 
     def to_dict(self, max_lines: float) -> str | dict[str, str | dict]:
+        """Create a nested dict representing the type tree structure."""
         if not self:  # empty
             return str(self._info)
         branch: Subtree
@@ -775,6 +794,11 @@ class Subtree(tuple):
         }
 
     def __eq__(self, other: object) -> bool:
+        """Compare two subtrees.
+
+        Subtrees containing the same type structure are equivalent,
+        except for set-like nodes.
+        """
         if not isinstance(other, type(self)):
             raise NotImplementedError
         if self._hash != other._hash:
@@ -788,6 +812,7 @@ class Subtree(tuple):
         return super().__eq__(other)
 
     def __lt__(self, other: object) -> bool:
+        """Compare two subtrees for sorting."""
         if not isinstance(other, type(self)):
             raise NotImplementedError
         if self == other:
@@ -808,12 +833,18 @@ class Subtree(tuple):
         return self._hash < other._hash
 
     def __str__(self) -> str:
+        """Return the string representation of the subtree."""
         return f'{self._info!s}{{...}}'
 
     def __repr__(self) -> str:
+        """Return the repr of the subtree."""
         return f'{type(self).__name__}({self!s})'
 
     def __hash__(self) -> int:
+        """Return the hash of the subtree.
+
+        Equivalent (equal) subtrees always evaluate to the same hash.
+        """
         return self._hash
 
 
@@ -821,39 +852,39 @@ class Tree(Subtree):
     """Root node of the type tree representation of a Python object.
 
     Root-only (:class:`Tree`) attributes:
-        :param depth: Maximum depth reached
-        :type depth: int
-        :param searches: Total number of nodes searches
-        :type searches: int
+
+    :param depth: Maximum depth reached
+    :type depth: int
+    :param searches: Total number of nodes searches
+    :type searches: int
 
     Inherited (:class:`Subtree`) attributes:
-        :param key: Key path from previous node to the current one
-        :type key: str
-        :param key_type: The key type used. Type `help(KeyType)` for
-            more info
-        :type key_type: KeyType
-        :param path: The key path from the root node to the current one
-        :type path: str
-        :param type: The type name of the object the node corresponds to
-        :type type: str
-        :param label: The full text displayed for the node
-        :type label: str
-        :param nodes: The number of inner nodes indexed
-        :type nodes: int
-        :param config: The settings used for generating the tree
-        :type config: Template
-        :param is_expandable: Flag for whether the node has inner
-            content. If `True`, the node will show as expandable in the
-            tree view
-        :type is_expandable: bool
-        :param maxed_depth: Flag for maximum depth reached. If `True`,
-            the object the node refers to has inner content that was not
-            indexed
-        :type maxed_depth: bool
-        :param overflowed: Flag indicating maximum branch exceeded. If
-            `True`, the node has more branches than indexed. Might be
-            from reaching either `max_search` or `max_branches`
-        :type overflowed: bool
+
+    :param key: Key path from previous node to the current one
+    :type key: str
+    :param key_type: The key type used. Type `help(KeyType)` for more
+        info
+    :type key_type: KeyType
+    :param path: The key path from the root node to the current one
+    :type path: str
+    :param type: The type name of the object the node corresponds to
+    :type type: str
+    :param label: The full text displayed for the node
+    :type label: str
+    :param nodes: The number of inner nodes indexed
+    :type nodes: int
+    :param config: The settings used for generating the tree
+    :type config: Template
+    :param is_expandable: Flag for whether the node has inner content.
+        If `True`, the node will show as expandable in the tree view
+    :type is_expandable: bool
+    :param maxed_depth: Flag for maximum depth reached. If `True`, the
+        object the node refers to has inner content that was not indexed
+    :type maxed_depth: bool
+    :param overflowed: Flag indicating maximum branch exceeded. If
+        `True`, the node has more branches than indexed. Might be from
+        reaching either `max_search` or `max_branches`
+    :type overflowed: bool
     """
 
     _depth: int
@@ -888,61 +919,60 @@ class Tree(Subtree):
     def __init__(self, obj: Any, **kwargs):
         """Build a recursive object tree structure.
 
-        Arguments:
-            :param obj: Any Python object to be analysed
-            :type obj: Any
-            :param key_text: Placeholder text for the root key node
-                Defaults to None
-            :type key_text: str, optional
-            :param template: A configuration template for common
-                object types. Currently supported: `Template` (default),
-                `DOM`, `HTML`, and `XML`
-            :param items_lookup: Function used to access the node's
-                content. Defaults to `lambda var: var`
-            :type items_lookup: Callable[[Any], Any], optional
-            :param type_name_lookup: Function used to get the type name.
-                Defaults to `lambda var: type(var).__name__`
-            :type type_name_lookup: Callable[[Any], Any], optional
-            :param value_lookup: Function used to get the value when the
-                node's content is empty (tree leaves). Defaults to
-                `lambda var: var`
-            :type value_lookup: Callable[[Any], Any], optional
-            :param sort_keys: Flag for sorting keys alphabetically.
-                Defaults to `True`
-            :type sort_keys: bool, optional
-            :param show_lengths: Flag for displaying sizes of iterables.
-                This affects how subtrees are grouped together, since
-                Sequences of different sizes but same content types are
-                considered equivalent. Defaults to `True`
-            :type show_lengths: bool, optional
-            :param include_attributes: Flag for including the mutable
-                attributes returned by `vars()`. Defaults to `True`
-            :type include_attributes: bool, optional
-            :param include_dir: Flag for including the attributes
-                returned by `dir()`, except the protected (`_protected`)
-                and special (`__special__`) ones. Defaults to `False`
-            :type include_dir: bool, optional
-            :param include_protected: Flag for including the protected
-                (`_protected`) attributes.  Defaults to `False`
-            :type include_protected: bool, optional
-            :param include_special`: Flag for including the special
-                (`__special__`) attributes.  Defaults to `False`
-            :type include_special: bool, optional
-            :param max_lines: Maximum number of lines to be printed
-                For the GUI, it is the maximum number of rows to be
-                displayed, not including the extra ellipsis at the end.
-                Can be disabled by setting it to infinity
-                (`float('inf')` or `math.inf`). Defaults to 1000
-            :type max_lines: float, optional
-            :param max_search: Maximum number of nodes searched.
-                Defaults to 100,000
-            :type max_search: float, optional
-            :param max_depth: Maximum search depth. Defaults to 20
-            :type max_depth: float, optional
-            :param max_branches: Maximum number of branches displayed on
-                each node. This only applies after grouping. Defaults to
-                infinity
-            :type max_branches: float, optional
+        :param obj: Any Python object to be analysed
+        :type obj: Any
+        :param key_text: Placeholder text for the root key node.
+            Defaults to None
+        :type key_text: str, optional
+        :param template: A configuration template for common object
+            types. Currently supported: `Template` (default), `DOM`,
+            `HTML`, and `XML`
+        :param items_lookup: Function used to access the node's content.
+            Defaults to `lambda var: var`
+        :type items_lookup: Callable[[Any], Any], optional
+        :param type_name_lookup: Function used to get the type name.
+            Defaults to `lambda var: type(var).__name__`
+        :type type_name_lookup: Callable[[Any], Any], optional
+        :param value_lookup: Function used to get the value when the
+            node's content is empty (tree leaves). Defaults to
+            `lambda var: var`
+        :type value_lookup: Callable[[Any], Any], optional
+        :param sort_keys: Flag for sorting keys alphabetically. Defaults
+            to `True`
+        :type sort_keys: bool, optional
+        :param show_lengths: Flag for displaying sizes of iterables.
+            This affects how subtrees are grouped together, since
+            Sequences of different sizes but same content types are
+            considered equivalent. Defaults to `True`
+        :type show_lengths: bool, optional
+        :param include_attributes: Flag for including the mutable
+            attributes returned by `vars()`. Defaults to `True`
+        :type include_attributes: bool, optional
+        :param include_dir: Flag for including the attributes returned
+            by `dir()`, except the protected (`_protected`) and special
+            (`__special__`) ones. Defaults to `False`
+        :type include_dir: bool, optional
+        :param include_protected: Flag for including the protected
+            (`_protected`) attributes.  Defaults to `False`
+        :type include_protected: bool, optional
+        :param include_special`: Flag for including the special
+            (`__special__`) attributes.  Defaults to `False`
+        :type include_special: bool, optional
+        :param max_lines: Maximum number of lines to be printed For the
+            GUI, it is the maximum number of rows to be displayed, not
+            including the extra ellipsis at the end. Can be disabled by
+            setting it to infinity (`float('inf')` or `math.inf`).
+            Defaults to 1000
+        :type max_lines: float, optional
+        :param max_search: Maximum number of nodes searched. Defaults to
+            100,000
+        :type max_search: float, optional
+        :param max_depth: Maximum search depth. Defaults to 20
+        :type max_depth: float, optional
+        :param max_branches: Maximum number of branches displayed on
+            each node. This only applies after grouping. Defaults to
+            infinity
+        :type max_branches: float, optional
         """
         super().__init__(obj, **kwargs)
 
@@ -993,13 +1023,12 @@ class Tree(Subtree):
                   verbose: bool = False) -> str:
         """Get a tree view of the object's type structure as a string.
 
-        Arguments:
-            :param max_lines: Maximum number of lines to be printed. Can
-                be disabled by setting it to infinity
-            :type max_lines: float, optional
-            :param verbose: Flag for printing extra information before
-                printing the tree view. Defaults to False
-            :type verbose: bool, optional
+        :param max_lines: Maximum number of lines to be printed. Can be
+            disabled by setting it to infinity
+        :type max_lines: float, optional
+        :param verbose: Flag for printing extra information before
+            printing the tree view. Defaults to False
+        :type verbose: bool, optional
         """
         lines: list[str] = []
         if verbose:
@@ -1014,13 +1043,12 @@ class Tree(Subtree):
     def print(self, max_lines: float | None = None, verbose: bool = False):
         """Print a tree view of the object's type structure.
 
-        Arguments:
-            :param max_lines: Maximum number of lines to be printed. Can
-                be disabled by setting it to infinity
-            :type max_lines: float, optional
-            :param verbose: Flag for printing extra information before
-                printing the tree view. Defaults to False
-            :type verbose: bool, optional
+        :param max_lines: Maximum number of lines to be printed. Can be
+            disabled by setting it to infinity
+        :type max_lines: float, optional
+        :param verbose: Flag for printing extra information before
+            printing the tree view. Defaults to False
+        :type verbose: bool, optional
         """
         print(self.to_string(max_lines=max_lines, verbose=verbose))
 
@@ -1028,14 +1056,13 @@ class Tree(Subtree):
              max_lines: float | None = None):
         """Show a tree view of the object's type structure in a GUI.
 
-        Arguments:
-            :param spawn_thread: Run the GUI in a separate thread
-            :type spawn_thread: bool
-            :param spawn_process: Run the GUI in a separate process
-            :type spawn_process: bool
-            :param max_lines: Maximum number of rows to be displayed,
-                not including the extra ellipsis at the end. Can be
-                disabled by setting it to infinity
+        :param spawn_thread: Run the GUI in a separate thread
+        :type spawn_thread: bool
+        :param spawn_process: Run the GUI in a separate process
+        :type spawn_process: bool
+        :param max_lines: Maximum number of rows to be displayed, not
+            including the extra ellipsis at the end. Can be disabled by
+            setting it to infinity
         """
         if max_lines is None:
             max_lines = self.max_lines
@@ -1048,17 +1075,16 @@ def print_tree(obj: Any, *, max_lines: float | None = None,
                verbose: bool = False, **kwargs):
     """Print a tree view of the object's type structure.
 
-    Arguments:
-        :param obj: Any Python object to be analysed
-        :type obj: Any
-        :param max_lines: Maximum number of lines to be printed. Can be
-            disabled by setting it to infinity
-        :type max_lines: float, optional
-        :param verbose: Flag for printing extra information before
-            printing the tree view. Defaults to False
-        :type verbose: bool, optional
-        :param kwargs: Same as :class:`Tree`. Type `help(Tree.__init__)`
-            for the full list
+    :param obj: Any Python object to be analysed
+    :type obj: Any
+    :param max_lines: Maximum number of lines to be printed. Can be
+        disabled by setting it to infinity
+    :type max_lines: float, optional
+    :param verbose: Flag for printing extra information before printing
+        the tree view. Defaults to False
+    :type verbose: bool, optional
+    :param kwargs: Same as :class:`Tree`. Type `help(Tree.__init__)` for
+        the full list
     """
     Tree(obj, **kwargs).print(max_lines=max_lines, verbose=verbose)
 
@@ -1069,50 +1095,14 @@ def view_tree(obj: Any, *,
               **kwargs):
     """Show a tree view of the object's type structure in a GUI.
 
-    Arguments:
-        :param obj: Any Python object to be analysed
-        :type obj: Any
-        :param spawn_thread: Run the GUI in a separate thread
-        :type spawn_thread: bool
-        :param spawn_process: Run the GUI in a separate process
-        :type spawn_process: bool
-        :param kwargs: Same as :class:`Tree`. Type `help(Tree.__init__)`
-            for the full list
+    :param obj: Any Python object to be analysed
+    :type obj: Any
+    :param spawn_thread: Run the GUI in a separate thread
+    :type spawn_thread: bool
+    :param spawn_process: Run the GUI in a separate process
+    :type spawn_process: bool
+    :param kwargs: Same as :class:`Tree`. Type `help(Tree.__init__)` for
+        the full list
     """
     Tree(obj, **kwargs).view(spawn_thread=spawn_thread,
                              spawn_process=spawn_process)
-
-
-if __name__ == '__main__':
-    d1 = [{'a', 'b', 1, 2, (3, 4), (5, 6), 'c', .1}, {'a': 0, 'b': ...}]
-    print_tree(d1)
-    print()
-
-    print_tree((0,), include_dir=True, max_depth=2, max_lines=15)
-    print()
-
-    import urllib.request
-    import xml.etree.ElementTree
-    url1 = 'https://www.w3schools.com/xml/simple.xml'
-    with urllib.request.urlopen(url1) as response1:
-        r1 = response1.read()
-    text1 = str(r1, encoding='utf-8')
-    tree1 = xml.etree.ElementTree.fromstring(text1)
-    print_tree(tree1, template=XML)
-    print()
-
-    import xml.dom.minidom
-    dom1 = xml.dom.minidom.parseString(text1)
-    print_tree(dom1, template=DOM, max_lines=10)
-    print()
-
-    obj1 = Tree(0)
-    print_tree(obj1, include_dir=True, max_depth=3, max_lines=15)
-    print()
-
-    url2 = 'https://archive.org/metadata/TheAdventuresOfTomSawyer_201303'
-    with urllib.request.urlopen(url2) as response2:
-        r2 = response2.read()
-    text2 = str(r2, encoding='utf-8')
-    json2 = json.loads(text2)
-    view_tree(json2)
