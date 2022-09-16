@@ -21,6 +21,7 @@
    :caption: Contents:
 
    typetree
+   license
 
 Project description
 ===================
@@ -204,7 +205,7 @@ Which gives the same output.
 
     typetree.view_tree(json2)
 
-.. image:: https://raw.githubusercontent.com/hugospinelli/typetree/master/docs/_static/GUI_Example1.png
+.. image:: https://raw.githubusercontent.com/hugospinelli/typetree/master/docs/source/_static/GUI_Example1.png
    :align: center
 
 - Double click or press Ctrl+C to copy the path to the selected node.
