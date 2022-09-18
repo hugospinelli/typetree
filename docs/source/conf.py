@@ -15,7 +15,7 @@ project = 'typetree'
 # noinspection PyShadowingBuiltins
 copyright = '2022, Hugo Spinelli'
 author = 'Hugo Spinelli'
-release = '0.1.5'
+release = '0.1.6'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
