@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Object type tree analyzer. The GUI is handled by a separate module.
-
-- Use :class:`Tree` to generate the type tree as an object, which can be
-  traversed as a subclass of a nested tuple.
-- Use :func:`print_tree` to directly print the tree view.
-- Use :func:`view_tree` to open the tree view as an interactive GUI.
-"""
+"""Object type tree analyzer. The GUI is handled by a separate module."""
 
 import dataclasses
 import enum
@@ -20,18 +14,6 @@ try:
     from viewer import tree_viewer
 except (ModuleNotFoundError, ImportError):
     from .viewer import tree_viewer
-
-__all__ = [
-    'Tree',
-    'Subtree',
-    'print_tree',
-    'view_tree',
-    'Template',
-    'DOM',
-    'HTML',
-    'XML',
-    'KeyType'
-]
 
 _DEFAULT_MAX_LINES = 1000
 _DEFAULT_MAX_SEARCH = 100_000
@@ -198,6 +180,8 @@ class _NodeKey:
             return self._slice < other._slice
         if self._type == other._type:
             if self._type == KeyType.SET:
+                if self._counter != other._counter:
+                    return self._counter < other._counter
                 return self._hash < other._hash
             return self._str < other._str
         return self._type < other._type
@@ -207,14 +191,17 @@ class _NodeKey:
 
 
 def get_itself(var: Any) -> Any:
+    """Do nothing, return itself."""
     return var
 
 
 def get_type_name(var: Any) -> str:
+    """Return the input's type name."""
     return str(type(var).__name__)
 
 
 def getattr_maker(attr: str) -> Callable[[Any], Any]:
+    """Build a partial `getattr` for a fixed attribute."""
     def attr_get(var: Any, attr_copy: str = attr) -> Any:
         return getattr(var, attr_copy)
     return attr_get
@@ -437,6 +424,13 @@ class _NodeInfo:
             return self.config.include_protected
         return True
 
+    def __lt__(self, other):
+        if self.key.type == other.key.type == KeyType.SET:
+            if self.key.counter != other.key.counter:
+                return self.key.counter < other.key.counter
+            return self.path < other.path
+        return self.key < other.key
+
     def __str__(self) -> str:
         return f'{self.key}{self.var_repr}'
 
@@ -600,7 +594,8 @@ class _SubtreeCreator:
                 added_branches.append(branch)
 
         # Update node keys
-        self.update_index_keys(index_branch_groups, index_key_groups)
+        unique_index_branches = self.update_index_keys(index_branch_groups,
+                                                       index_key_groups)
         for branch in unique_set_branches:
             branch._update_key(branch._node_key)
 
@@ -623,11 +618,12 @@ class _SubtreeCreator:
             updated_branches.append(branch)
         return list(sorted(updated_branches, key=lambda x: x.key))
 
+    # noinspection PyProtectedMember
     def sort_branches(self):
         self.all_branches = tuple(sorted(
             self.all_branches,
-            key=((lambda x: x.key) if self.config.sort_keys
-                 else lambda x: x.key.type)
+            key=((lambda x: x._info) if self.config.sort_keys
+                 else lambda x: x._node_key._type)
         ))
 
 

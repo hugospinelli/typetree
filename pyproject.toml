@@ -37,7 +37,7 @@ version = {attr = "typetree.__version__"}
 
 [tool.pylama]
 format = "pylint"
-skip = "build/*,docs/*,examples/*,typetree/__init__.py,setup.py"
+skip = "build/*,docs/*,examples/*,tests/*,typetree/__init__.py,setup.py"
 linters = "eradicate,mccabe,mypy,pycodestyle,pydocstyle,pyflakes,pylint,isort"
 ignore = "E226"
 

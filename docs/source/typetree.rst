@@ -1,7 +1,7 @@
 typetree
 ========
 
-.. automodule:: typetree.typetree
+.. automodule:: typetree
 
 Main classes
 ------------
@@ -57,7 +57,7 @@ Helper classes
 ``XML``
 ........
 
-.. autoclass:: typetree.XML
+.. autoclass:: XML
 
 Other
 -----
