@@ -27,6 +27,7 @@ clipboard = ["pyperclip>=1.8.2"]
 "Documentation" = "https://typetree.readthedocs.io"
 
 [tool.setuptools]
+packages = ["typetree"]
 zip-safe = false
 
 [tool.setuptools.package-data]
@@ -37,7 +38,7 @@ version = {attr = "typetree.__version__"}
 
 [tool.pylama]
 format = "pylint"
-skip = "build/*,docs/*,examples/*,tests/*,typetree/__init__.py,setup.py"
+skip = "build/*,docs/*,examples/*,tests/*,typetree/__init__.py,setup.py,venvs/*"
 linters = "eradicate,mccabe,mypy,pycodestyle,pydocstyle,pyflakes,pylint,isort"
 ignore = "E226"
 

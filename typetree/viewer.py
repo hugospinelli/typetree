@@ -13,15 +13,15 @@ except (ModuleNotFoundError, ImportError):
 
 # Make text look sharper for displays with scaling different from 100%.
 # Only works for Windows.
-# WARNING: This is permanently applied to the whole process, not just
-# the window or the thread.
 SET_DPI_AWARENESS: bool = True
 try:
-    # This is for calling windll.shcore.SetProcessDpiAwareness(1) on
+    # This is for calling windll.user32.SetThreadDpiAwarenessContext on
     # the initialization of a new ViewTreeWindow object.
-    from ctypes import windll  # type: ignore
+    from ctypes import windll, wintypes
 except ImportError:
-    pass  # Not required
+    # Not required
+    windll = None  # type: ignore
+    wintypes = None  # type: ignore
 
 _PYPERCLIP_LOADED: bool = True
 try:
@@ -46,6 +46,8 @@ class TreeNode:
     """Recursive class representing each tree node."""
 
     font_size: int = 10
+    # Use Consolas for Windows, Courier for other OS
+    font_name: str = 'Courier' if windll is None else 'Consolas'
     # The values below will be multiplied by font_size
     row_height_factor: float = 2.1
     indent_width_factor: float = 2.3
@@ -84,7 +86,7 @@ class TreeNode:
     def __init__(self, root: 'ViewTreeWindow', parent: Optional['TreeNode'],
                  tree: 'PicklableTree'):
         """Recursively initialize the tree, but wait for drawing later."""
-        self.font: tuple[str, int] = ('Consolas', self.font_size)
+        self.font: tuple[str, int] = (self.font_name, self.font_size)
         # Cache of PhotoImage instances for icons
         self.icons: dict[str, tk.PhotoImage] = {}
         self.root: ViewTreeWindow = root
@@ -731,15 +733,17 @@ def tree_window_loop(tree: PicklableTree):
     Can be used concurrently, as a separate thread, or as a separate
     process.
     """
+    ctx = None
+    # Enable DPI awareness
     # Make text look sharper for displays with scaling different
     # from 100%. Only works for Windows.
-    # WARNING: This is permanently applied to the whole process, not
-    # just the window or the thread.
     if SET_DPI_AWARENESS and windll is not None:
-        windll.shcore.SetProcessDpiAwareness(1)
-
+        ctx = windll.user32.SetThreadDpiAwarenessContext(wintypes.HANDLE(-2))
     window = ViewTreeWindow(tree)
     window.mainloop()
+    # Restore previous DPI awareness state
+    if ctx is not None:
+        windll.user32.SetThreadDpiAwarenessContext(ctx)
 
 
 def tree_viewer(tree, max_lines: float, *,

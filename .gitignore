@@ -4,6 +4,9 @@ typetree/datafiles/
 # PyCharm project settings
 .idea/
 
+# Virtual environments
+venvs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
